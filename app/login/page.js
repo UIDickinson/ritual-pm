@@ -142,7 +142,7 @@ export default function LoginPage() {
 
         {/* Footer Note */}
         <div className="mt-6 text-center text-xs text-slate-gray">
-          <p>🎮 Play money prediction markets for the Ritual community</p>
+          <p>🎮 Built for community choices, curiosity, and fun</p>
         </div>
       </div>
     </div>
