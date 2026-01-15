@@ -1,26 +1,123 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 @theme inline {
+  /* Brand Colors - Emerald Green Spectrum */
+  --color-primary-emerald: #10B981;
+  --color-deep-emerald: #059669;
+  --color-light-emerald: #6EE7B7;
+  --color-bright-lime: #84CC16;
+  
+  /* Secondary - Blue Spectrum */
+  --color-primary-blue: #3B82F6;
+  --color-deep-blue: #2563EB;
+  --color-sky-blue: #0EA5E9;
+  --color-cyan: #06B6D4;
+  
+  /* Accent Colors */
+  --color-hot-coral: #F43F5E;
+  --color-sunset-orange: #F59E0B;
+  --color-amber-gold: #F59E0B;
+  --color-deep-purple: #8B5CF6;
+  --color-electric-pink: #EC4899;
+  
+  /* Neutral Colors */
+  --color-black: #000000;
+  --color-white: #FFFFFF;
+  --color-charcoal: #1F2937;
+  --color-soft-gray: #F3F4F6;
+  --color-slate-gray: #64748B;
+  
+  /* Background and Foreground */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  
+  /* Fonts */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  
+  /* Border Radius */
+  --radius-sharp: 4px;
+  --radius-soft: 12px;
+  --radius-round: 16px;
+  --radius-pill: 999px;
+  
+  /* Shadows */
+  --shadow-emerald: 0 8px 24px rgba(16, 185, 129, 0.4);
+  --shadow-lime: 0 8px 24px rgba(132, 204, 22, 0.4);
+  --shadow-blue: 0 8px 24px rgba(59, 130, 246, 0.4);
+  --shadow-coral: 0 8px 24px rgba(244, 63, 94, 0.4);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #0a0a0a;
+  color: #ededed;
+  font-family: var(--font-sans);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(16, 185, 129, 0.05);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(16, 185, 129, 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(16, 185, 129, 0.5);
+}
+
+/* Glassmorphism Utilities */
+.glass-light {
+  background: rgba(16, 185, 129, 0.05);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(16, 185, 129, 0.15);
+}
+
+.glass-dark {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.glass-heavy {
+  backdrop-filter: blur(40px) saturate(150%);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+/* Gradient Backgrounds */
+.gradient-primary {
+  background: linear-gradient(135deg, #10B981, #84CC16);
+}
+
+.gradient-secondary {
+  background: linear-gradient(135deg, #3B82F6, #0EA5E9);
+}
+
+.gradient-energy {
+  background: linear-gradient(135deg, #10B981, #3B82F6);
+}
+
+.gradient-success {
+  background: linear-gradient(135deg, #6EE7B7, #10B981);
+}
+
+.gradient-alert {
+  background: linear-gradient(135deg, #F43F5E, #F59E0B);
+}
+
+.gradient-depth {
+  background: linear-gradient(135deg, #059669, #000000);
 }

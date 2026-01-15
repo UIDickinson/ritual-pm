@@ -1,23 +1,32 @@
 {
-  "name": "ritual-pm-temp",
+  "name": "ritual-pm",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed": "node scripts/seed.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.90.1",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.2.3",
+    "lucide-react": "^0.562.0",
     "next": "16.1.2",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.1",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.2",
+    "jest": "^30.2.0",
     "tailwindcss": "^4"
   }
 }
