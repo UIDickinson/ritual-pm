@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Loader2, UserPlus, User, Lock, TrendingUp } from 'lucide-react';
+import Image from 'next/image';
+import { Loader2, UserPlus, User, Lock } from 'lucide-react';
 
 export default function RegisterPage() {
   const [username, setUsername] = useState('');
@@ -61,8 +62,14 @@ export default function RegisterPage() {
       <div className="w-full max-w-md relative z-10">
         {/* Logo/Brand */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl gradient-primary mb-4 shadow-lg shadow-emerald">
-            <TrendingUp className="w-8 h-8 text-white" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-black mb-4 shadow-lg">
+            <Image 
+              src="/logo.png" 
+              alt="Ritual Logo" 
+              width={64} 
+              height={64}
+              className="w-16 h-16"
+            />
           </div>
           <h1 className="text-3xl font-bold text-white mb-2">
             Join Ritual
