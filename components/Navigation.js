@@ -3,7 +3,8 @@
 import { useAuth } from '@/contexts/AuthContext';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { TrendingUp, Home, PlusCircle, Wallet, LogOut, Shield } from 'lucide-react';
+import Image from 'next/image';
+import { Home, PlusCircle, Wallet, LogOut, Shield } from 'lucide-react';
 
 export default function Navigation() {
   const { user, logout, isAdmin } = useAuth();
@@ -30,8 +31,14 @@ export default function Navigation() {
         <div className="flex items-center justify-between h-20">
           {/* Logo/Brand */}
           <Link href="/" className="flex items-center gap-3 group">
-            <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center shadow-lg shadow-emerald group-hover:scale-105 transition-transform">
-              <TrendingUp className="w-6 h-6 text-white" />
+            <div className="w-10 h-10 rounded-xl bg-black flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform">
+              <Image 
+                src="/logo.png" 
+                alt="Ritual Logo" 
+                width={40} 
+                height={40}
+                className="w-10 h-10"
+              />
             </div>
             <div className="hidden md:block">
               <span className="text-white font-bold text-lg">Ritual</span>
