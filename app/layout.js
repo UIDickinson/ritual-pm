@@ -10,6 +10,9 @@ const inter = Inter({
 export const metadata = {
   title: "Ritual Prediction Market",
   description: "Community-based prediction market for Ritual Network",
+  icons: {
+    icon: '/logo.png',
+  },
 };
 
 export default function RootLayout({ children }) {
