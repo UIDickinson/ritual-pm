@@ -71,6 +71,25 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleApproveMarket = async (marketId) => {
+    try {
+      const res = await fetch(`/api/markets/${marketId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          action: 'approve'
+        })
+      });
+
+      if (res.ok) {
+        fetchData();
+      }
+    } catch (error) {
+      console.error('Failed to approve market:', error);
+    }
+  };
+
   const handleActivateMarket = async (marketId) => {
     try {
       const res = await fetch(`/api/markets/${marketId}/status`, {
@@ -133,6 +152,7 @@ export default function AdminDashboard() {
   };
 
   const pendingApprovals = markets.filter(m => m.status === 'proposed');
+  const approvedMarkets = markets.filter(m => m.status === 'approved');
   const activeMarkets = markets.filter(m => m.status === 'live');
   const closedMarkets = markets.filter(m => m.status === 'closed');
   const disputedMarkets = markets.filter(m => m.status === 'disputed');
@@ -276,6 +296,45 @@ export default function AdminDashboard() {
                               <div className="flex items-center gap-4 text-xs text-zinc-500">
                                 <span>Created by {market.creator?.username}</span>
                                 <span>Votes: {market.approval_votes?.approve || 0}/10</span>
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleApproveMarket(market.id)}
+                                className="px-4 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg text-sm font-medium hover:bg-emerald-500/30 transition-all whitespace-nowrap"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => handleDissolveMarket(market.id)}
+                                className="px-4 py-2 bg-red-500/20 text-red-400 rounded-lg text-sm font-medium hover:bg-red-500/30 transition-all whitespace-nowrap"
+                              >
+                                Dissolve
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Approved Markets - Ready to Activate */}
+                {approvedMarkets.length > 0 && (
+                  <div className="glass-dark p-6 rounded-2xl border border-emerald-500/20">
+                    <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                      <CheckCircle className="w-6 h-6 text-emerald-400" />
+                      Approved Markets ({approvedMarkets.length})
+                    </h3>
+                    <div className="space-y-3">
+                      {approvedMarkets.slice(0, 5).map(market => (
+                        <div key={market.id} className="glass-dark p-4 rounded-xl">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex-1">
+                              <p className="text-white font-medium mb-1">{market.question}</p>
+                              <p className="text-zinc-400 text-sm mb-2">{market.description}</p>
+                              <div className="flex items-center gap-4 text-xs text-zinc-500">
+                                <span>Created by {market.creator?.username}</span>
                               </div>
                             </div>
                             <div className="flex gap-2">

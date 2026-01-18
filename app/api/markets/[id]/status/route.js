@@ -38,6 +38,17 @@ export async function PATCH(request, { params }) {
     let activityType = '';
 
     switch (action) {
+      case 'approve':
+        if (market.status !== 'proposed') {
+          return NextResponse.json(
+            { error: 'Only proposed markets can be approved' },
+            { status: 400 }
+          );
+        }
+        newStatus = 'approved';
+        activityType = 'market_approved';
+        break;
+
       case 'activate':
         if (market.status !== 'approved') {
           return NextResponse.json(
