@@ -78,7 +78,7 @@ export default function Home() {
         <div className="glass-dark p-8 rounded-2xl border border-primary-emerald/20 mb-8">
           <div className="max-w-3xl">
             <h1 className="text-4xl font-bold text-white mb-4">
-              Welcome back, <span className="text-primary-emerald">{user.username}</span>!
+              Welcome, <span className="text-primary-emerald">{user.username}</span>!
             </h1>
             <p className="text-slate-gray text-lg mb-6">
               Predict outcomes, earn points, and compete with the Ritual community.
