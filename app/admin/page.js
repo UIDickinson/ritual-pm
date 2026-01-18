@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, CheckCircle, XCircle, Clock, Users, TrendingUp, Activity, RefreshCw, Settings } from 'lucide-react';
+import { AlertCircle, CheckCircle, XCircle, Clock, Users, TrendingUp, Activity, RefreshCw, Settings, Gift } from 'lucide-react';
 import UserManagementModal from '@/components/UserManagementModal';
 
 export default function AdminDashboard() {
@@ -18,6 +18,9 @@ export default function AdminDashboard() {
   const [selectedUser, setSelectedUser] = useState(null);
   const [showUserModal, setShowUserModal] = useState(false);
   const [statistics, setStatistics] = useState(null);
+  const [showBonusModal, setShowBonusModal] = useState(false);
+  const [bonusMarket, setBonusMarket] = useState(null);
+  const [bonusAmount, setBonusAmount] = useState('');
 
   useEffect(() => {
     if (!isAdmin) {
@@ -149,6 +152,38 @@ export default function AdminDashboard() {
     } catch (error) {
       console.error('Failed to dissolve market:', error);
     }
+  };
+
+  const handleAddBonus = async () => {
+    if (!bonusMarket || !bonusAmount || parseFloat(bonusAmount) <= 0) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/markets/${bonusMarket.id}/bonus`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          amount: parseFloat(bonusAmount)
+        })
+      });
+
+      if (res.ok) {
+        setShowBonusModal(false);
+        setBonusMarket(null);
+        setBonusAmount('');
+        fetchData();
+      }
+    } catch (error) {
+      console.error('Failed to add bonus:', error);
+    }
+  };
+
+  const openBonusModal = (market) => {
+    setBonusMarket(market);
+    setBonusAmount('');
+    setShowBonusModal(true);
   };
 
   const pendingApprovals = markets.filter(m => m.status === 'proposed');
@@ -338,6 +373,12 @@ export default function AdminDashboard() {
                               </div>
                             </div>
                             <div className="flex gap-2">
+                              <button
+                                onClick={() => openBonusModal(market)}
+                                className="px-4 py-2 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm font-medium hover:bg-yellow-500/30 transition-all whitespace-nowrap"
+                              >
+                                Add Bonus
+                              </button>
                               <button
                                 onClick={() => handleActivateMarket(market.id)}
                                 className="px-4 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg text-sm font-medium hover:bg-emerald-500/30 transition-all whitespace-nowrap"
@@ -604,6 +645,7 @@ export default function AdminDashboard() {
                             <span className={`px-3 py-1 rounded-full text-xs font-medium ${
                               market.status === 'live' ? 'bg-emerald-500/20 text-emerald-400' :
                               market.status === 'proposed' ? 'bg-orange-500/20 text-orange-400' :
+                              market.status === 'approved' ? 'bg-cyan-500/20 text-cyan-400' :
                               market.status === 'closed' ? 'bg-blue-500/20 text-blue-400' :
                               market.status === 'resolved' ? 'bg-purple-500/20 text-purple-400' :
                               market.status === 'disputed' ? 'bg-red-500/20 text-red-400' :
@@ -616,12 +658,23 @@ export default function AdminDashboard() {
                             Created by {market.creator?.username} • {new Date(market.created_at).toLocaleDateString()}
                           </p>
                         </div>
-                        <button
-                          onClick={() => router.push(`/markets/${market.id}`)}
-                          className="px-4 py-2 glass-dark rounded-lg text-sm font-medium hover:bg-emerald-500/10 transition-all"
-                        >
-                          View
-                        </button>
+                        <div className="flex gap-2">
+                          {['approved', 'live'].includes(market.status) && (
+                            <button
+                              onClick={() => openBonusModal(market)}
+                              className="px-4 py-2 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm font-medium hover:bg-yellow-500/30 transition-all flex items-center gap-2"
+                            >
+                              <Gift className="w-4 h-4" />
+                              Add Bonus
+                            </button>
+                          )}
+                          <button
+                            onClick={() => router.push(`/markets/${market.id}`)}
+                            className="px-4 py-2 glass-dark rounded-lg text-sm font-medium hover:bg-emerald-500/10 transition-all"
+                          >
+                            View
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -713,6 +766,60 @@ export default function AdminDashboard() {
           }}
           onUpdate={fetchData}
         />
+      )}
+
+      {/* Add Bonus Modal */}
+      {showBonusModal && bonusMarket && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="glass-dark p-6 rounded-2xl border border-yellow-500/30 w-full max-w-md">
+            <div className="flex items-center gap-3 mb-4">
+              <Gift className="w-6 h-6 text-yellow-400" />
+              <h3 className="text-xl font-bold text-white">Add Bonus to Pool</h3>
+            </div>
+            
+            <div className="mb-4">
+              <p className="text-zinc-400 text-sm mb-2">Market:</p>
+              <p className="text-white font-medium">{bonusMarket.question}</p>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-zinc-400 text-sm mb-2">
+                Bonus Amount (pts)
+              </label>
+              <input
+                type="number"
+                min="1"
+                value={bonusAmount}
+                onChange={(e) => setBonusAmount(e.target.value)}
+                placeholder="Enter bonus amount"
+                className="w-full px-4 py-3 glass-dark rounded-xl text-white placeholder-zinc-500 border border-zinc-700 focus:border-yellow-500/50 focus:outline-none"
+              />
+              <p className="text-zinc-500 text-xs mt-2">
+                Bonus will be distributed evenly across all outcomes in the market pool.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowBonusModal(false);
+                  setBonusMarket(null);
+                  setBonusAmount('');
+                }}
+                className="flex-1 px-4 py-3 glass-dark rounded-xl text-zinc-400 font-medium hover:bg-white/5 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddBonus}
+                disabled={!bonusAmount || parseFloat(bonusAmount) <= 0}
+                className="flex-1 px-4 py-3 bg-yellow-500/20 text-yellow-400 rounded-xl font-medium hover:bg-yellow-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add Bonus
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
