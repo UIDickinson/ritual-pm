@@ -11,6 +11,7 @@ export default function Home() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const [markets, setMarkets] = useState([]);
+  const [allMarkets, setAllMarkets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('live');
   const [searchQuery, setSearchQuery] = useState('');
@@ -24,6 +25,7 @@ export default function Home() {
   useEffect(() => {
     if (user) {
       fetchMarkets();
+      fetchAllMarkets();
     }
   }, [user, activeTab]);
 
@@ -38,6 +40,16 @@ export default function Home() {
       console.error('Failed to fetch markets:', error);
     }
     setLoading(false);
+  };
+
+  const fetchAllMarkets = async () => {
+    try {
+      const response = await fetch('/api/markets');
+      const data = await response.json();
+      setAllMarkets(data.markets || []);
+    } catch (error) {
+      console.error('Failed to fetch all markets:', error);
+    }
   };
 
   const filteredMarkets = markets.filter(market => {
@@ -95,13 +107,13 @@ export default function Home() {
               <div className="bg-white/5 rounded-xl p-4 border border-primary-blue/10">
                 <p className="text-slate-gray text-sm mb-1">Total Markets</p>
                 <p className="text-2xl font-bold text-primary-blue font-mono">
-                  {markets.length}
+                  {allMarkets.length}
                 </p>
               </div>
               <div className="bg-white/5 rounded-xl p-4 border border-sunset-orange/10">
                 <p className="text-slate-gray text-sm mb-1">Live Markets</p>
                 <p className="text-2xl font-bold text-sunset-orange font-mono">
-                  {markets.filter(m => m.status === 'live').length}
+                  {allMarkets.filter(m => m.status === 'live').length}
                 </p>
               </div>
             </div>
