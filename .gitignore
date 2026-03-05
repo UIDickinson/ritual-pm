@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+**/node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -32,6 +33,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+
+# local planning/docs not intended for source control
+PM.md.resolved.txt
+PM.v2.draft.md
+SETUP.md
 
 # vercel
 .vercel

@@ -26,6 +26,14 @@ A decentralized prediction market platform for the Ritual Network community, bui
 - Dispute resolution (uphold, overturn, invalidate)
 - Platform settings configuration
 - Activity logs and analytics
+- AI proposal review workflow (approve, edit+approve, reject)
+- AI pipeline controls (enable/disable and manual trigger)
+
+### AI + Telegram Features
+- AI ingestion and market proposal pipeline for Reddit/Telegram sources
+- Dedicated worker service (`workers/`) with queue-based topic processing
+- Telegram command bot with `/help`, `/listen`, `/stop`, `/peek`, `/create`, and `/list`
+- Telegram command state persisted via platform settings (listen chat IDs + update offset)
 
 ## Tech Stack
 
@@ -33,6 +41,8 @@ A decentralized prediction market platform for the Ritual Network community, bui
 - **Styling**: Tailwind CSS 4 with custom emerald-green theme
 - **Database**: Supabase (PostgreSQL)
 - **Authentication**: Custom bcrypt-based system
+- **Queue**: BullMQ + Redis
+- **LLM**: Google Gemini (with heuristic fallback)
 - **Icons**: Lucide React
 
 ## Installation
@@ -53,11 +63,17 @@ Create a `.env.local` file with:
 ```
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+JWT_SECRET=your_jwt_secret
+AI_SERVICE_TOKEN=shared_secret_for_worker_api_auth
+GEMINI_API_KEY=optional_for_llm_generation
+GEMINI_MODEL=gemini-2.0-flash
 ```
 
 4. Set up the database:
 - Run the SQL schema from `database/schema.sql` in your Supabase project
 - This creates all necessary tables, functions, and triggers
+- Run SQL migrations in `database/migrations/` (includes v2 AI Market Discovery tables)
 
 5. Seed the database (optional):
 ```bash
@@ -112,6 +128,191 @@ npm run dev
 - Admin-only routes protected with role validation
 - SQL injection prevention via Supabase parameterized queries
 - Activity logging for audit trails
+
+## AI Market Discovery v2 (Phase 3)
+
+The repository now includes a v2 Phase 3 pipeline for AI-assisted market discovery:
+
+- SQL migration baseline for AI topics/proposals/events in `database/migrations/`
+- Worker-authenticated app routes under `/api/ai/*` (including `/api/ai/messages`, `/api/ai/market-context`, `/api/ai/proposals`, `/api/ai/performance-context`, `/api/ai/model-config`, `/api/ai/telegram`)
+- Admin proposal routes under `/api/admin/proposals` and `/api/admin/ai-dashboard`
+- Admin pipeline control route under `/api/admin/ai-pipeline`
+- Separate worker service in `workers/` for managed container deployment (Reddit, Telegram, topic-processor, feedback-aggregator)
+
+Phase 3 adds a feedback aggregation + auto-tuning loop that updates active engagement model weights and thresholds from realized market outcomes.
+
+### Worker Service Quick Start
+
+1. Install worker dependencies:
+```bash
+cd workers
+npm install
+```
+
+2. Configure env vars for workers:
+```
+RITUAL_API_BASE_URL=https://your-app-domain
+AI_SERVICE_TOKEN=shared_secret_for_worker_api_auth
+REDIS_URL=redis://your-redis-host:6379
+```
+
+3. Run a worker locally:
+```bash
+WORKER_TYPE=reddit REDDIT_SUBREDDITS=ritualnet,predictionmarkets npm start
+WORKER_TYPE=telegram TELEGRAM_BOT_TOKEN=... TELEGRAM_ALLOWED_CHAT_IDS=-10012345,-10067890 npm start
+WORKER_TYPE=topic-processor npm start
+WORKER_TYPE=feedback-aggregator npm start
+```
+
+Telegram worker runtime options:
+- `TELEGRAM_CONTINUOUS=true` (default): long-running bot polling loop (best for local/manual hosting)
+- `TELEGRAM_CONTINUOUS=false`: one-shot polling cycle (best for cron/GitHub Actions)
+- `TELEGRAM_POLL_INTERVAL_MS=5000` (default): loop interval for continuous mode
+- `TELEGRAM_MARKET_CREATOR_USER_ID=<users.id>` (optional): explicit creator for `/create` market insertion
+
+### Telegram Bot Commands
+
+After starting the Telegram worker and adding the bot to a group/channel:
+
+- `/help` - show command usage
+- `/listen` - enable ingestion for the current chat
+- `/stop` - disable ingestion for the current chat
+- `/peek` - run quick analysis on recent messages and generate proposal candidates
+- `/create question | optional description | optional YYYY-MM-DD`
+   - Group/channel admin invocation creates a `live` market
+   - DM/non-admin invocation creates a `proposed` market
+- `/list` - choose `Proposed` or `Live`, then bot returns latest markets
+
+### Telegram Setup Checklist
+
+1. Create bot in Telegram via `@BotFather` and copy `TELEGRAM_BOT_TOKEN`.
+2. Add the bot to your target group/channel.
+3. Ensure worker env has:
+   - `WORKER_TYPE=telegram`
+   - `RITUAL_API_BASE_URL` pointing to your app
+   - `AI_SERVICE_TOKEN` matching app value exactly
+   - `TELEGRAM_BOT_TOKEN`
+   - `TELEGRAM_ALLOWED_CHAT_IDS` (optional allowlist)
+4. Start the app (`npm run dev`) and worker (`cd workers && WORKER_TYPE=telegram npm start`).
+5. In Telegram, run `/help`, then `/listen` in the group/channel to enable ingestion.
+6. Send test messages and run `/peek` to generate proposal candidates.
+
+4. See `workers/README.md` for Docker and managed-service deployment notes.
+
+Recommended managed cron schedule:
+- Reddit: every 20 minutes
+- Telegram: every 15 minutes
+- Topic processor: every 15 minutes
+- Feedback aggregator: daily at 02:00 UTC
+
+Free deployment option:
+- Use `.github/workflows/ai-workers.yml` for scheduled worker execution on GitHub Actions.
+- Use Upstash Redis free tier for `REDIS_URL`.
+- Add required repository secrets listed in `workers/README.md`.
+
+## Deploy (Vercel + GitHub Actions Workers)
+
+This project is deployed as two parts:
+
+1. **Next.js app** on Vercel
+2. **AI workers** on GitHub Actions schedule (or any worker host)
+
+### 1. Deploy the app to Vercel
+
+1. Push your repository to GitHub.
+2. In Vercel, import the repo and create a project.
+3. In Vercel Project Settings -> Environment Variables, set:
+
+```dotenv
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+JWT_SECRET=...
+
+AI_SERVICE_TOKEN=...
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.0-flash
+
+REDIS_URL=rediss://...
+RITUAL_API_BASE_URL=https://<your-vercel-domain>
+```
+
+4. Deploy and copy your production URL (for example `https://your-app.vercel.app`).
+
+### 2. Prepare Supabase schema
+
+Run these SQL files in your Supabase project:
+
+1. `database/schema.sql`
+2. `database/migrations/20260217_001_ai_market_discovery_baseline.sql`
+3. `database/migrations/20260218_002_ai_model_tuning.sql`
+4. `database/migrations/20260218_003_atomic_financial_ops.sql`
+5. `database/migrations/20260218_004_bonus_pool_column.sql`
+6. `database/migrations/20260218_005_composite_indexes.sql`
+7. `database/migrations/20260219_006_ai_pipeline_control.sql`
+8. `database/migrations/20260219_007_proposals_generated_by.sql`
+9. `database/seed.sql` (optional)
+
+### 3. Configure GitHub Actions workers
+
+In GitHub -> Settings -> Secrets and variables -> Actions, add:
+
+- `RITUAL_API_BASE_URL` = your Vercel URL
+- `AI_SERVICE_TOKEN` = same value as Vercel `AI_SERVICE_TOKEN`
+- `REDIS_URL`
+- `REDDIT_SUBREDDITS` (optional)
+- `REDDIT_POST_LIMIT` (optional)
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_ALLOWED_CHAT_IDS`
+- `TELEGRAM_UPDATE_LIMIT` (optional)
+- `TELEGRAM_UPDATE_OFFSET` (optional)
+- `TELEGRAM_CONTINUOUS` (set to `false` for scheduled runs)
+- `TELEGRAM_POLL_INTERVAL_MS` (optional)
+- `TELEGRAM_MARKET_CREATOR_USER_ID` (optional but recommended)
+- `GEMINI_API_KEY`
+- `GEMINI_MODEL` (optional)
+- `TOPIC_PROCESSOR_DRAIN_LIMIT` (optional)
+- `TOPIC_SCORE_REVIEW_THRESHOLD` (optional)
+- `TOPIC_SCORE_HIGH_THRESHOLD` (optional)
+- `TOPIC_DUPLICATE_THRESHOLD` (optional)
+- `DEFAULT_PROPOSAL_RESOLUTION_DAYS` (optional)
+- `FEEDBACK_LOOKBACK_HOURS` (optional)
+- `MODEL_LEARNING_RATE` (optional)
+- `MODEL_TUNING_MIN_SAMPLES` (optional)
+
+Then run `.github/workflows/ai-workers.yml` once with **workflow_dispatch** to validate setup.
+
+### 4. Important Telegram note
+
+For scheduled worker runs, keep `TELEGRAM_CONTINUOUS=false` so each cron run executes one polling cycle and exits cleanly.
+
+## Troubleshooting
+
+### Telegram bot does not respond
+- Confirm worker is running with `WORKER_TYPE=telegram`.
+- Verify `TELEGRAM_BOT_TOKEN` is valid (`getMe` call succeeds).
+- If previously configured for webhooks, clear it for polling mode:
+   - `https://api.telegram.org/bot<TOKEN>/deleteWebhook`
+
+### Worker fails with `ECONNREFUSED` or API fetch errors
+- App server is unreachable from worker.
+- For local dev set `RITUAL_API_BASE_URL=http://localhost:3000` and ensure `npm run dev` is running.
+
+### Unauthorized AI requests (`401`)
+- `AI_SERVICE_TOKEN` must match exactly between app `.env.local` and worker env.
+
+### `/listen` works but no messages are ingested
+- Check `TELEGRAM_ALLOWED_CHAT_IDS` includes that chat ID (or leave empty to disable allowlist).
+- Use `/stop` then `/listen` again to refresh listen state.
+
+### `/create` fails to create market
+- Ensure `TELEGRAM_MARKET_CREATOR_USER_ID` is set to a valid `users.id`, or at least one admin exists.
+- Validate close date in `/create` is in the future.
+
+### `/peek` returns 0 proposals
+- Not enough recent meaningful messages in the past hour.
+- Topic suitability/duplicate filters may reject candidates.
+- Try with more specific, event-driven messages and rerun `/peek`.
 
 ## Market Lifecycle
 

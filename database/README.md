@@ -14,6 +14,16 @@
 
 This will create all the necessary tables, indexes, and functions for the Ritual Prediction Market.
 
+## Step 1.1: Apply SQL Migrations
+
+After running the base schema, apply each file in `/database/migrations` in order.
+
+The v2 AI Market Discovery baseline migration is:
+
+- `20260217_001_ai_market_discovery_baseline.sql`
+
+Run migration files in Supabase SQL Editor and verify no errors before proceeding.
+
 ## Step 2: Seed the Database
 
 After creating the schema, run the seed script to populate initial data:
