@@ -37,7 +37,6 @@ yarn-error.log*
 # local planning/docs not intended for source control
 PM.md.resolved.txt
 PM.v2.draft.md
-SETUP.md
 
 # vercel
 .vercel
