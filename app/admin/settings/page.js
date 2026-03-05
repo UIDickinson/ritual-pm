@@ -45,7 +45,6 @@ export default function PlatformSettings() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
           settings: {
             required_approval_votes: settings.required_approval_votes,
             approval_deadline_hours: settings.approval_deadline_hours,

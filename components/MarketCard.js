@@ -3,8 +3,9 @@
 import { useRouter } from 'next/navigation';
 import { Clock, Users, TrendingUp, CheckCircle, AlertCircle } from 'lucide-react';
 
-export default function MarketCard({ market }) {
+export default function MarketCard({ market, settings }) {
   const router = useRouter();
+  const approvalThreshold = parseFloat(settings?.required_approval_votes) || 10;
 
   const getStatusBadge = () => {
     const badges = {
@@ -74,15 +75,15 @@ export default function MarketCard({ market }) {
     return `${minutes}m`;
   };
 
-  const getOutcomeColor = (index) => {
-    const colors = [
-      'from-primary-emerald to-bright-lime',
-      'from-primary-blue to-sky-blue',
-      'from-sunset-orange to-hot-coral',
-      'from-deep-purple to-electric-pink'
-    ];
-    return colors[index % colors.length];
-  };
+  // Static Tailwind classes — dynamic construction like `bg-gradient-to-r ${var}` breaks JIT
+  const outcomeGradients = [
+    'h-full bg-gradient-to-r from-primary-emerald to-bright-lime transition-all duration-500',
+    'h-full bg-gradient-to-r from-primary-blue to-sky-blue transition-all duration-500',
+    'h-full bg-gradient-to-r from-sunset-orange to-hot-coral transition-all duration-500',
+    'h-full bg-gradient-to-r from-deep-purple to-electric-pink transition-all duration-500'
+  ];
+
+  const getOutcomeGradient = (index) => outcomeGradients[index % outcomeGradients.length];
 
   const calculatePercentage = (staked) => {
     if (market.total_pool === 0) return 0;
@@ -147,7 +148,7 @@ export default function MarketCard({ market }) {
                 </div>
                 <div className="h-2 bg-white/5 rounded-full overflow-hidden">
                   <div
-                    className={`h-full bg-gradient-to-r ${getOutcomeColor(index)} transition-all duration-500`}
+                    className={getOutcomeGradient(index)}
                     style={{ width: `${percentage}%` }}
                   />
                 </div>
@@ -168,13 +169,13 @@ export default function MarketCard({ market }) {
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-gray">Approval Votes</span>
               <span className="text-white font-semibold">
-                {market.approval_votes.approve} / 10
+                {market.approval_votes.approve} / {approvalThreshold}
               </span>
             </div>
             <div className="mt-2 h-1 bg-white/5 rounded-full overflow-hidden">
               <div
                 className="h-full bg-gradient-to-r from-primary-emerald to-bright-lime"
-                style={{ width: `${Math.min((market.approval_votes.approve / 10) * 100, 100)}%` }}
+                style={{ width: `${Math.min((market.approval_votes.approve / approvalThreshold) * 100, 100)}%` }}
               />
             </div>
           </div>

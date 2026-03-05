@@ -9,10 +9,11 @@ import PredictionModal from '@/components/PredictionModal';
 import { Loader2, Clock, Users, TrendingUp, Calendar, User, ArrowLeft, AlertTriangle } from 'lucide-react';
 
 export default function MarketDetailPage() {
-  const { user } = useAuth();
+  const { user, updateBalance } = useAuth();
   const router = useRouter();
   const params = useParams();
   const [market, setMarket] = useState(null);
+  const [platformSettings, setPlatformSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [showVoteModal, setShowVoteModal] = useState(false);
   const [showPredictionModal, setShowPredictionModal] = useState(false);
@@ -34,6 +35,7 @@ export default function MarketDetailPage() {
       
       if (response.ok) {
         setMarket(data.market);
+        if (data.settings) setPlatformSettings(data.settings);
       } else {
         console.error('Market not found');
         router.push('/');
@@ -59,8 +61,10 @@ export default function MarketDetailPage() {
     // Refresh market data
     fetchMarket();
     
-    // Update user balance in context
-    user.points_balance = data.newBalance;
+    // Update user balance in context (immutable)
+    if (updateBalance) {
+      updateBalance(data.newBalance);
+    }
   };
 
   const handleSubmitDispute = async () => {
@@ -75,7 +79,6 @@ export default function MarketDetailPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
           reason: disputeReason
         })
       });
@@ -102,7 +105,8 @@ export default function MarketDetailPage() {
     const resolvedAt = new Date(market.resolution_time);
     const now = new Date();
     const hoursElapsed = (now - resolvedAt) / (1000 * 60 * 60);
-    return hoursElapsed < 24;
+    const disputeHours = parseFloat(platformSettings.dispute_window_hours) || 24;
+    return hoursElapsed < disputeHours;
   };
 
   if (loading) {
@@ -147,15 +151,15 @@ export default function MarketDetailPage() {
     });
   };
 
-  const getOutcomeColor = (index) => {
-    const colors = [
-      'from-primary-emerald to-bright-lime',
-      'from-primary-blue to-sky-blue',
-      'from-sunset-orange to-hot-coral',
-      'from-deep-purple to-electric-pink'
-    ];
-    return colors[index % colors.length];
-  };
+  // Static Tailwind classes — dynamic construction breaks JIT
+  const outcomeGradients = [
+    'h-full bg-gradient-to-r from-primary-emerald to-bright-lime transition-all duration-500',
+    'h-full bg-gradient-to-r from-primary-blue to-sky-blue transition-all duration-500',
+    'h-full bg-gradient-to-r from-sunset-orange to-hot-coral transition-all duration-500',
+    'h-full bg-gradient-to-r from-deep-purple to-electric-pink transition-all duration-500'
+  ];
+
+  const getOutcomeGradient = (index) => outcomeGradients[index % outcomeGradients.length];
 
   const calculatePercentage = (staked) => {
     if (market.total_pool === 0) return 0;
@@ -266,7 +270,7 @@ export default function MarketDetailPage() {
                       </div>
                       <div className="h-3 bg-white/5 rounded-full overflow-hidden">
                         <div
-                          className={`h-full bg-gradient-to-r ${getOutcomeColor(index)} transition-all duration-500`}
+                          className={getOutcomeGradient(index)}
                           style={{ width: `${percentage}%` }}
                         />
                       </div>
@@ -341,7 +345,7 @@ export default function MarketDetailPage() {
                         Dispute Resolution
                       </button>
                       <p className="text-xs text-slate-gray mt-2">
-                        Dispute window closes in {Math.floor(24 - ((new Date() - new Date(market.resolution_time)) / (1000 * 60 * 60)))} hours
+                        Dispute window closes in {Math.floor((parseFloat(platformSettings.dispute_window_hours) || 24) - ((new Date() - new Date(market.resolution_time)) / (1000 * 60 * 60)))} hours
                       </p>
                     </div>
                   )}

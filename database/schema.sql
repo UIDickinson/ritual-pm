@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS markets (
   resolution_time TIMESTAMP WITH TIME ZONE,
   resolved_by UUID REFERENCES users(id),
   resolution_reason TEXT,
-  winning_outcome_id UUID
+  winning_outcome_id UUID,
+  bonus_pool DECIMAL(10, 2) NOT NULL DEFAULT 0.00
 );
 
 -- Outcomes Table
@@ -123,6 +124,13 @@ CREATE INDEX idx_disputes_market ON disputes(market_id);
 CREATE INDEX idx_resolution_votes_market ON resolution_votes(market_id);
 CREATE INDEX idx_activity_logs_user ON activity_logs(user_id);
 CREATE INDEX idx_activity_logs_created ON activity_logs(created_at);
+
+-- Composite & covering indexes for common query patterns
+CREATE INDEX idx_predictions_user_market ON predictions(user_id, market_id);
+CREATE INDEX idx_disputes_status ON disputes(status);
+CREATE INDEX idx_disputes_market_status ON disputes(market_id, status);
+CREATE INDEX idx_markets_status_created ON markets(status, created_at DESC);
+CREATE INDEX idx_approval_votes_market_vote ON approval_votes(market_id, vote);
 
 -- Create function to update last_active timestamp
 CREATE OR REPLACE FUNCTION update_last_active()

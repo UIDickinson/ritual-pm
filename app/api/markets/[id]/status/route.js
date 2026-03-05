@@ -1,24 +1,14 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { requireAdmin } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
 export async function PATCH(request, { params }) {
   try {
+    const session = await requireAdmin();
     const { id } = await params;
-    const { userId, action } = await request.json();
+    const { action } = await request.json();
 
-    // Check if user is admin
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', userId)
-      .single();
-
-    if (userError || !user || user.role !== 'admin') {
-      return NextResponse.json(
-        { error: 'Unauthorized. Admin access required.' },
-        { status: 403 }
-      );
-    }
+    const supabase = getServiceSupabase();
 
     // Get market
     const { data: market, error: marketError } = await supabase
@@ -99,7 +89,7 @@ export async function PATCH(request, { params }) {
 
     // Log activity
     await supabase.rpc('log_activity', {
-      p_user_id: userId,
+      p_user_id: session.userId,
       p_action_type: activityType,
       p_target_id: id,
       p_details: { action, old_status: market.status, new_status: newStatus }
@@ -112,6 +102,7 @@ export async function PATCH(request, { params }) {
     });
 
   } catch (error) {
+    if (error instanceof Response) return error;
     console.error('Update market status error:', error);
     return NextResponse.json(
       { error: 'Failed to update market status' },

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -13,8 +13,20 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [startingBalance, setStartingBalance] = useState(10);
   const { register } = useAuth();
   const router = useRouter();
+
+  useEffect(() => {
+    fetch('/api/markets?limit=1')
+      .then(res => res.json())
+      .then(data => {
+        if (data.settings?.starting_balance) {
+          setStartingBalance(parseFloat(data.settings.starting_balance));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -201,7 +213,7 @@ export default function RegisterPage() {
           <div className="inline-flex items-center gap-2 bg-primary-emerald/10 border border-primary-emerald/30 rounded-xl px-4 py-2">
             <span className="text-bright-lime text-2xl">🎁</span>
             <span className="text-white text-sm font-medium">
-              Get <span className="text-bright-lime font-bold">10 points</span> to start!
+              Get <span className="text-bright-lime font-bold">{startingBalance} points</span> to start!
             </span>
           </div>
         </div>

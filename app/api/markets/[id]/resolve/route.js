@@ -1,32 +1,22 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { requireAdmin } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
 export async function POST(request, { params }) {
   try {
+    const session = await requireAdmin();
     const { id } = await params;
-    const { userId, winningOutcomeId, resolutionReason } = await request.json();
+    const { winningOutcomeId, resolutionReason } = await request.json();
 
     // Validate input
-    if (!userId || !winningOutcomeId || !resolutionReason) {
+    if (!winningOutcomeId || !resolutionReason) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       );
     }
 
-    // Check if user is admin
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', userId)
-      .single();
-
-    if (userError || !user || user.role !== 'admin') {
-      return NextResponse.json(
-        { error: 'Unauthorized. Admin access required.' },
-        { status: 403 }
-      );
-    }
+    const supabase = getServiceSupabase();
 
     // Check market status
     const { data: market, error: marketError } = await supabase
@@ -72,18 +62,18 @@ export async function POST(request, { params }) {
         winning_outcome_id: winningOutcomeId,
         resolution_reason: resolutionReason,
         resolution_time: new Date().toISOString(),
-        resolved_by: userId
+        resolved_by: session.userId
       })
       .eq('id', id);
 
     if (updateError) throw updateError;
 
     // Calculate and distribute payouts
-    await calculatePayouts(id, winningOutcomeId);
+    await calculatePayouts(supabase, id, winningOutcomeId);
 
     // Log activity
     await supabase.rpc('log_activity', {
-      p_user_id: userId,
+      p_user_id: session.userId,
       p_action_type: 'market_resolved',
       p_target_id: id,
       p_details: { winning_outcome_id: winningOutcomeId, reason: resolutionReason }
@@ -95,6 +85,7 @@ export async function POST(request, { params }) {
     });
 
   } catch (error) {
+    if (error instanceof Response) return error;
     console.error('Resolve market error:', error);
     return NextResponse.json(
       { error: 'Failed to resolve market' },
@@ -103,7 +94,16 @@ export async function POST(request, { params }) {
   }
 }
 
-async function calculatePayouts(marketId, winningOutcomeId) {
+async function calculatePayouts(supabase, marketId, winningOutcomeId) {
+  // Get market bonus pool
+  const { data: market } = await supabase
+    .from('markets')
+    .select('bonus_pool')
+    .eq('id', marketId)
+    .single();
+
+  const bonusPool = parseFloat(market?.bonus_pool || 0);
+
   // Get all outcomes and their totals
   const { data: outcomes } = await supabase
     .from('outcomes')
@@ -120,7 +120,7 @@ async function calculatePayouts(marketId, winningOutcomeId) {
 
   // If no one bet on winning outcome, refund all
   if (winningPool === 0) {
-    await refundAllPredictions(marketId);
+    await refundAllPredictions(supabase, marketId);
     return;
   }
 
@@ -132,10 +132,11 @@ async function calculatePayouts(marketId, winningOutcomeId) {
     .eq('outcome_id', winningOutcomeId);
 
   // Calculate and update payouts for winners
+  // Bonus pool is added to losers' stakes as extra winnings for winners
   for (const prediction of winningPredictions) {
     const userStake = parseFloat(prediction.stake_amount);
     const userShare = userStake / winningPool;
-    const winnings = userShare * losingPool;
+    const winnings = userShare * (losingPool + bonusPool);
     const totalPayout = userStake + winnings;
 
     // Update prediction with payout
@@ -147,19 +148,11 @@ async function calculatePayouts(marketId, winningOutcomeId) {
       })
       .eq('id', prediction.id);
 
-    // Add payout to user balance
-    const { data: currentUser } = await supabase
-      .from('users')
-      .select('points_balance')
-      .eq('id', prediction.user_id)
-      .single();
-
-    await supabase
-      .from('users')
-      .update({
-        points_balance: parseFloat(currentUser.points_balance) + totalPayout
-      })
-      .eq('id', prediction.user_id);
+    // Atomically credit payout
+    await supabase.rpc('credit_balance', {
+      p_user_id: prediction.user_id,
+      p_amount: totalPayout
+    });
   }
 
   // Mark losing predictions as paid out with 0 payout
@@ -179,26 +172,18 @@ async function calculatePayouts(marketId, winningOutcomeId) {
   }
 }
 
-async function refundAllPredictions(marketId) {
+async function refundAllPredictions(supabase, marketId) {
   const { data: predictions } = await supabase
     .from('predictions')
     .select('*')
     .eq('market_id', marketId);
 
   for (const prediction of predictions) {
-    // Refund stake to user
-    const { data: currentUser } = await supabase
-      .from('users')
-      .select('points_balance')
-      .eq('id', prediction.user_id)
-      .single();
-
-    await supabase
-      .from('users')
-      .update({
-        points_balance: parseFloat(currentUser.points_balance) + parseFloat(prediction.stake_amount)
-      })
-      .eq('id', prediction.user_id);
+    // Atomically refund stake
+    await supabase.rpc('credit_balance', {
+      p_user_id: prediction.user_id,
+      p_amount: parseFloat(prediction.stake_amount)
+    });
 
     // Mark as paid out
     await supabase

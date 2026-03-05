@@ -1,31 +1,16 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { requireAdmin } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
-export async function GET(request) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
+    const session = await requireAdmin();
+    const supabase = getServiceSupabase();
 
-    // Check if user is admin
-    if (userId) {
-      const { data: user, error: userError } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', userId)
-        .single();
-
-      if (userError || !user || user.role !== 'admin') {
-        return NextResponse.json(
-          { error: 'Unauthorized. Admin access required.' },
-          { status: 403 }
-        );
-      }
-    }
-
-    // Get all users
+    // Get all users — EXCLUDE password_hash
     const { data: users, error } = await supabase
       .from('users')
-      .select('*')
+      .select('id, username, role, points_balance, created_at, last_active')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -39,6 +24,7 @@ export async function GET(request) {
     return NextResponse.json(users);
 
   } catch (error) {
+    if (error instanceof Response) return error;
     console.error('Get users error:', error);
     return NextResponse.json(
       { error: 'Failed to fetch users' },
@@ -49,21 +35,10 @@ export async function GET(request) {
 
 export async function PATCH(request) {
   try {
-    const { userId, targetUserId, action, value } = await request.json();
+    const session = await requireAdmin();
+    const { targetUserId, action, value } = await request.json();
 
-    // Check if user is admin
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', userId)
-      .single();
-
-    if (userError || !user || user.role !== 'admin') {
-      return NextResponse.json(
-        { error: 'Unauthorized. Admin access required.' },
-        { status: 403 }
-      );
-    }
+    const supabase = getServiceSupabase();
 
     // Handle different actions
     let updateData = {};
@@ -100,7 +75,7 @@ export async function PATCH(request) {
 
     // Log activity
     await supabase.rpc('log_activity', {
-      p_user_id: userId,
+      p_user_id: session.userId,
       p_action_type: action,
       p_target_id: targetUserId,
       p_details: { value }
@@ -109,6 +84,7 @@ export async function PATCH(request) {
     return NextResponse.json({ success: true });
 
   } catch (error) {
+    if (error instanceof Response) return error;
     console.error('Update user error:', error);
     return NextResponse.json(
       { error: 'Failed to update user' },

@@ -1,9 +1,10 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
 import { NextResponse } from 'next/server';
 
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
+    const supabase = getServiceSupabase();
 
     const { data: market, error } = await supabase
       .from('markets')
@@ -49,7 +50,16 @@ export async function GET(request, { params }) {
       sum + parseFloat(outcome.total_staked), 0
     );
 
-    return NextResponse.json({ market });
+    // Fetch relevant platform settings for frontend display
+    const { data: settingsRows } = await supabase
+      .from('platform_settings')
+      .select('key, value')
+      .in('key', ['required_approval_votes', 'dispute_window_hours']);
+
+    const settings = {};
+    settingsRows?.forEach(row => { settings[row.key] = row.value; });
+
+    return NextResponse.json({ market, settings });
 
   } catch (error) {
     console.error('Get market error:', error);

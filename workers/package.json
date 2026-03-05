@@ -1,0 +1,19 @@
+{
+  "name": "ritual-pm-workers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "start:reddit": "WORKER_TYPE=reddit node src/index.js",
+    "start:telegram": "WORKER_TYPE=telegram node src/index.js",
+    "start:topic-processor": "WORKER_TYPE=topic-processor node src/index.js",
+    "start:feedback-aggregator": "WORKER_TYPE=feedback-aggregator node src/index.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.41.0",
+    "bullmq": "^5.61.0",
+    "dotenv": "^17.2.3",
+    "ioredis": "^5.8.2"
+  }
+}

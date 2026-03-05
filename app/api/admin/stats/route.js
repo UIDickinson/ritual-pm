@@ -1,26 +1,11 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { requireAdmin } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
-export async function GET(request) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
-
-    // Check if user is admin
-    if (userId) {
-      const { data: user, error: userError } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', userId)
-        .single();
-
-      if (userError || !user || user.role !== 'admin') {
-        return NextResponse.json(
-          { error: 'Unauthorized. Admin access required.' },
-          { status: 403 }
-        );
-      }
-    }
+    const session = await requireAdmin();
+    const supabase = getServiceSupabase();
 
     // Get market statistics
     const { data: markets, error: marketsError } = await supabase
@@ -33,7 +18,7 @@ export async function GET(request) {
 
     const { data: users, error: usersError } = await supabase
       .from('users')
-      .select('*');
+      .select('id, role, points_balance, created_at, last_active');
 
     if (marketsError || predictionsError || usersError) {
       console.error('Stats error:', marketsError || predictionsError || usersError);
@@ -97,6 +82,7 @@ export async function GET(request) {
     return NextResponse.json(stats);
 
   } catch (error) {
+    if (error instanceof Response) return error;
     console.error('Get statistics error:', error);
     return NextResponse.json(
       { error: 'Failed to fetch statistics' },

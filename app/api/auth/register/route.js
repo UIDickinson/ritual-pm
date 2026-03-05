@@ -1,4 +1,5 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { createSessionToken, setSessionCookie } from '@/lib/auth';
 import bcrypt from 'bcryptjs';
 import { NextResponse } from 'next/server';
 
@@ -30,6 +31,8 @@ export async function POST(request) {
       );
     }
 
+    const supabase = getServiceSupabase();
+
     // Check if username already exists
     const { data: existingUser } = await supabase
       .from('users')
@@ -55,7 +58,7 @@ export async function POST(request) {
       .eq('key', 'starting_balance')
       .single();
 
-    const startingBalance = settings?.value?.number || 100;
+    const startingBalance = parseFloat(settings?.value) || 10;
 
     // Create user
     const { data: newUser, error } = await supabase
@@ -82,6 +85,10 @@ export async function POST(request) {
       p_target_id: newUser.id,
       p_details: { username }
     });
+
+    // Create JWT session
+    const token = await createSessionToken(newUser);
+    await setSessionCookie(token);
 
     // Remove password_hash from response
     const { password_hash, ...userWithoutPassword } = newUser;

@@ -41,7 +41,6 @@ export default function PredictionModal({ market, user, onClose, onSuccess }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
           marketId: market.id,
           outcomeId: selectedOutcome.id,
           stakeAmount: stake
@@ -62,14 +61,17 @@ export default function PredictionModal({ market, user, onClose, onSuccess }) {
     }
   };
 
-  const getOutcomeColor = (index) => {
-    const colors = [
-      'primary-emerald',
-      'primary-blue',
-      'sunset-orange',
-      'deep-purple'
-    ];
-    return colors[index % colors.length];
+  // Static Tailwind class map — dynamic class construction (e.g. `border-${color}`)
+  // doesn't work because Tailwind purges classes at build time.
+  const outcomeStyles = [
+    { border: 'border-primary-emerald', bg: 'bg-primary-emerald/20', text: 'text-primary-emerald', shadow: 'shadow-lg' },
+    { border: 'border-primary-blue', bg: 'bg-primary-blue/20', text: 'text-primary-blue', shadow: 'shadow-lg' },
+    { border: 'border-sunset-orange', bg: 'bg-sunset-orange/20', text: 'text-sunset-orange', shadow: 'shadow-lg' },
+    { border: 'border-deep-purple', bg: 'bg-deep-purple/20', text: 'text-deep-purple', shadow: 'shadow-lg' },
+  ];
+
+  const getOutcomeStyle = (index) => {
+    return outcomeStyles[index % outcomeStyles.length];
   };
 
   return (
@@ -112,7 +114,7 @@ export default function PredictionModal({ market, user, onClose, onSuccess }) {
                   ? ((parseFloat(outcome.total_staked) / market.total_pool) * 100).toFixed(1)
                   : 0;
                 const isSelected = selectedOutcome?.id === outcome.id;
-                const color = getOutcomeColor(index);
+                const style = getOutcomeStyle(index);
 
                 return (
                   <button
@@ -122,16 +124,16 @@ export default function PredictionModal({ market, user, onClose, onSuccess }) {
                     className={`
                       w-full p-4 rounded-xl border-2 transition-all text-left
                       ${isSelected
-                        ? `border-${color} bg-${color}/20 shadow-lg`
+                        ? `${style.border} ${style.bg} ${style.shadow}`
                         : 'border-white/10 hover:border-white/30 bg-white/5'
                       }
                     `}
                   >
                     <div className="flex justify-between items-center mb-2">
-                      <span className={`font-semibold ${isSelected ? `text-${color}` : 'text-white'}`}>
+                      <span className={`font-semibold ${isSelected ? style.text : 'text-white'}`}>
                         {outcome.outcome_text}
                       </span>
-                      <span className={`text-sm font-mono ${isSelected ? `text-${color}` : 'text-bright-lime'}`}>
+                      <span className={`text-sm font-mono ${isSelected ? style.text : 'text-bright-lime'}`}>
                         {percentage}%
                       </span>
                     </div>

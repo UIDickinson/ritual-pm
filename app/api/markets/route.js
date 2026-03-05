@@ -1,4 +1,5 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { getSession } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
 export async function GET(request) {
@@ -6,6 +7,17 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
     const userId = searchParams.get('userId');
+    const page = Math.max(1, parseInt(searchParams.get('page')) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit')) || 50));
+    const offset = (page - 1) * limit;
+
+    const supabase = getServiceSupabase();
+
+    // Get total count for pagination metadata
+    let countQuery = supabase.from('markets').select('id', { count: 'exact', head: true });
+    if (status) countQuery = countQuery.eq('status', status);
+    if (userId) countQuery = countQuery.eq('creator_id', userId);
+    const { count: totalCount } = await countQuery;
 
     let query = supabase
       .from('markets')
@@ -14,7 +26,8 @@ export async function GET(request) {
         creator:users!markets_creator_id_fkey(id, username, role),
         outcomes:outcomes!outcomes_market_id_fkey(id, outcome_text, total_staked, order_index)
       `)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
 
     if (status) {
       query = query.eq('status', status);
@@ -59,7 +72,25 @@ export async function GET(request) {
       );
     });
 
-    return NextResponse.json({ markets });
+    // Fetch relevant platform settings for frontend display
+    const { data: settingsRows } = await supabase
+      .from('platform_settings')
+      .select('key, value')
+      .in('key', ['required_approval_votes', 'dispute_window_hours', 'starting_balance']);
+
+    const settings = {};
+    settingsRows?.forEach(row => { settings[row.key] = row.value; });
+
+    return NextResponse.json({
+      markets,
+      settings,
+      pagination: {
+        page,
+        limit,
+        totalCount: totalCount || 0,
+        totalPages: Math.ceil((totalCount || 0) / limit)
+      }
+    });
 
   } catch (error) {
     console.error('Get markets error:', error);
@@ -72,15 +103,23 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    const { userId, question, description, outcomes, closeTime } = await request.json();
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+    const userId = session.userId;
+
+    const { question, description, outcomes, closeTime } = await request.json();
 
     // Validate input
-    if (!userId || !question || !outcomes || !closeTime) {
+    if (!question || !outcomes || !closeTime) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       );
     }
+
+    const supabase = getServiceSupabase();
 
     if (outcomes.length < 2 || outcomes.length > 5) {
       return NextResponse.json(

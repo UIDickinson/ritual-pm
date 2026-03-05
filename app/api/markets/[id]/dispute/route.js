@@ -1,18 +1,27 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { getSession } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
 export async function POST(request, { params }) {
   try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+    const userId = session.userId;
+
     const { id } = await params;
-    const { userId, reason } = await request.json();
+    const { reason } = await request.json();
 
     // Validate input
-    if (!userId || !reason || reason.length < 10) {
+    if (!reason || reason.length < 10) {
       return NextResponse.json(
         { error: 'Dispute reason must be at least 10 characters' },
         { status: 400 }
       );
     }
+
+    const supabase = getServiceSupabase();
 
     // Get market
     const { data: market, error: marketError } = await supabase
@@ -35,14 +44,22 @@ export async function POST(request, { params }) {
       );
     }
 
-    // Check if within 24-hour dispute window
+    // Read dispute window from platform settings
+    const { data: windowSetting } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'dispute_window_hours')
+      .single();
+    const disputeWindowHours = parseInt(windowSetting?.value) || 24;
+
+    // Check if within dispute window
     const resolutionTime = new Date(market.resolution_time);
     const now = new Date();
     const hoursSinceResolution = (now - resolutionTime) / (1000 * 60 * 60);
 
-    if (hoursSinceResolution > 24) {
+    if (hoursSinceResolution > disputeWindowHours) {
       return NextResponse.json(
-        { error: 'Dispute window has closed (24 hours after resolution)' },
+        { error: `Dispute window has closed (${disputeWindowHours} hours after resolution)` },
         { status: 400 }
       );
     }
@@ -109,6 +126,7 @@ export async function POST(request, { params }) {
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
+    const supabase = getServiceSupabase();
 
     const { data: disputes, error } = await supabase
       .from('disputes')

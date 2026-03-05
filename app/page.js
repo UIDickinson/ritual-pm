@@ -11,7 +11,8 @@ export default function Home() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const [markets, setMarkets] = useState([]);
-  const [allMarkets, setAllMarkets] = useState([]);
+  const [marketCounts, setMarketCounts] = useState({ total: 0, live: 0 });
+  const [platformSettings, setPlatformSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('live');
   const [searchQuery, setSearchQuery] = useState('');
@@ -25,9 +26,15 @@ export default function Home() {
   useEffect(() => {
     if (user) {
       fetchMarkets();
-      fetchAllMarkets();
     }
   }, [user, activeTab]);
+
+  // Fetch aggregate counts once on mount
+  useEffect(() => {
+    if (user) {
+      fetchMarketCounts();
+    }
+  }, [user]);
 
   const fetchMarkets = async () => {
     setLoading(true);
@@ -36,19 +43,26 @@ export default function Home() {
       const response = await fetch(`/api/markets${status ? `?status=${status}` : ''}`);
       const data = await response.json();
       setMarkets(data.markets || []);
+      if (data.settings) setPlatformSettings(data.settings);
     } catch (error) {
       console.error('Failed to fetch markets:', error);
     }
     setLoading(false);
   };
 
-  const fetchAllMarkets = async () => {
+  const fetchMarketCounts = async () => {
     try {
-      const response = await fetch('/api/markets');
-      const data = await response.json();
-      setAllMarkets(data.markets || []);
+      const [allRes, liveRes] = await Promise.all([
+        fetch('/api/markets?limit=1'),
+        fetch('/api/markets?status=live&limit=1')
+      ]);
+      const [allData, liveData] = await Promise.all([allRes.json(), liveRes.json()]);
+      setMarketCounts({
+        total: allData.pagination?.totalCount || allData.markets?.length || 0,
+        live: liveData.pagination?.totalCount || liveData.markets?.length || 0
+      });
     } catch (error) {
-      console.error('Failed to fetch all markets:', error);
+      console.error('Failed to fetch market counts:', error);
     }
   };
 
@@ -107,13 +121,13 @@ export default function Home() {
               <div className="bg-white/5 rounded-xl p-4 border border-primary-blue/10">
                 <p className="text-slate-gray text-sm mb-1">Total Markets</p>
                 <p className="text-2xl font-bold text-primary-blue font-mono">
-                  {allMarkets.length}
+                  {marketCounts.total}
                 </p>
               </div>
               <div className="bg-white/5 rounded-xl p-4 border border-sunset-orange/10">
                 <p className="text-slate-gray text-sm mb-1">Live Markets</p>
                 <p className="text-2xl font-bold text-sunset-orange font-mono">
-                  {allMarkets.filter(m => m.status === 'live').length}
+                  {marketCounts.live}
                 </p>
               </div>
             </div>
@@ -201,7 +215,7 @@ export default function Home() {
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredMarkets.map((market) => (
-                <MarketCard key={market.id} market={market} />
+                <MarketCard key={market.id} market={market} settings={platformSettings} />
               ))}
             </div>
           </>

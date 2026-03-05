@@ -1,4 +1,5 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { createSessionToken, setSessionCookie } from '@/lib/auth';
 import bcrypt from 'bcryptjs';
 import { NextResponse } from 'next/server';
 
@@ -13,6 +14,8 @@ export async function POST(request) {
         { status: 400 }
       );
     }
+
+    const supabase = getServiceSupabase();
 
     // Fetch user by username
     const { data: user, error } = await supabase
@@ -51,6 +54,10 @@ export async function POST(request) {
       p_target_id: user.id,
       p_details: { username }
     });
+
+    // Create JWT session
+    const token = await createSessionToken(user);
+    await setSessionCookie(token);
 
     // Remove password_hash from response
     const { password_hash, ...userWithoutPassword } = user;

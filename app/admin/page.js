@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, CheckCircle, XCircle, Clock, Users, TrendingUp, Activity, RefreshCw, Settings, Gift } from 'lucide-react';
+import { AlertCircle, CheckCircle, XCircle, Clock, Users, TrendingUp, Activity, RefreshCw, Settings, Gift, Sparkles, Brain } from 'lucide-react';
 import UserManagementModal from '@/components/UserManagementModal';
 
 export default function AdminDashboard() {
@@ -40,8 +40,9 @@ export default function AdminDashboard() {
         fetch('/api/admin/stats')
       ]);
 
+      let marketsData = null;
       if (marketsRes.ok) {
-        const marketsData = await marketsRes.json();
+        marketsData = await marketsRes.json();
         setMarkets(marketsData.markets || []);
       }
 
@@ -60,13 +61,20 @@ export default function AdminDashboard() {
         setStatistics(statsData);
       }
 
-      // Fetch pending disputes
-      const proposedMarkets = markets.filter(m => m.status === 'disputed');
-      const disputePromises = proposedMarkets.map(m =>
-        fetch(`/api/markets/${m.id}/dispute`).then(r => r.json())
-      );
-      const allDisputes = await Promise.all(disputePromises);
-      setDisputes(allDisputes.flat().filter(d => d.status === 'pending'));
+      // Fetch pending disputes — use freshly fetched marketsData (not stale state)
+      const disputedMarkets = (marketsData?.markets || []).filter(m => m.status === 'disputed');
+      if (disputedMarkets.length > 0) {
+        const disputePromises = disputedMarkets.map(m =>
+          fetch(`/api/markets/${m.id}/dispute`).then(r => r.json())
+        );
+        const allDisputeResults = await Promise.all(disputePromises);
+        const flatDisputes = allDisputeResults
+          .flatMap(result => result.disputes || [])
+          .filter(d => d.status === 'pending');
+        setDisputes(flatDisputes);
+      } else {
+        setDisputes([]);
+      }
     } catch (error) {
       console.error('Failed to fetch admin data:', error);
     } finally {
@@ -80,7 +88,6 @@ export default function AdminDashboard() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
           action: 'approve'
         })
       });
@@ -99,7 +106,6 @@ export default function AdminDashboard() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
           action: 'activate'
         })
       });
@@ -118,7 +124,6 @@ export default function AdminDashboard() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
           action: 'close'
         })
       });
@@ -141,7 +146,6 @@ export default function AdminDashboard() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
           action: 'dissolve'
         })
       });
@@ -164,7 +168,6 @@ export default function AdminDashboard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
           amount: parseFloat(bonusAmount)
         })
       });
@@ -210,6 +213,24 @@ export default function AdminDashboard() {
             >
               <Settings className="w-5 h-5 text-emerald-400" />
               <span className="text-white font-medium">Platform Settings</span>
+            </button>
+          </div>
+
+          {/* AI Navigation */}
+          <div className="flex gap-3 mt-4">
+            <button
+              onClick={() => router.push('/admin/proposals')}
+              className="px-5 py-2.5 glass-dark rounded-xl hover:bg-purple-500/10 border border-purple-500/20 transition-all flex items-center gap-2"
+            >
+              <Sparkles className="w-5 h-5 text-purple-400" />
+              <span className="text-white font-medium">AI Proposals</span>
+            </button>
+            <button
+              onClick={() => router.push('/admin/ai-dashboard')}
+              className="px-5 py-2.5 glass-dark rounded-xl hover:bg-blue-500/10 border border-blue-500/20 transition-all flex items-center gap-2"
+            >
+              <Brain className="w-5 h-5 text-blue-400" />
+              <span className="text-white font-medium">AI Dashboard</span>
             </button>
           </div>
         </div>
@@ -743,7 +764,7 @@ export default function AdminDashboard() {
                           <p className="text-zinc-400 text-sm">{activity.user?.username}</p>
                         </div>
                         <p className="text-xs text-zinc-500 whitespace-nowrap">
-                          {new Date(activity.timestamp).toLocaleString()}
+                          {new Date(activity.created_at).toLocaleString()}
                         </p>
                       </div>
                     </div>
@@ -759,7 +780,6 @@ export default function AdminDashboard() {
       {showUserModal && selectedUser && (
         <UserManagementModal
           user={selectedUser}
-          adminUserId={user.id}
           onClose={() => {
             setShowUserModal(false);
             setSelectedUser(null);

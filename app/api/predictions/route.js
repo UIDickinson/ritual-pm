@@ -1,12 +1,19 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { getSession } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
 export async function POST(request) {
   try {
-    const { userId, marketId, outcomeId, stakeAmount } = await request.json();
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    const { marketId, outcomeId, stakeAmount } = await request.json();
+    const userId = session.userId;
 
     // Validate input
-    if (!userId || !marketId || !outcomeId || !stakeAmount) {
+    if (!marketId || !outcomeId || !stakeAmount) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
@@ -21,26 +28,7 @@ export async function POST(request) {
       );
     }
 
-    // Get user balance
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('points_balance')
-      .eq('id', userId)
-      .single();
-
-    if (userError || !user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
-    }
-
-    if (user.points_balance < stake) {
-      return NextResponse.json(
-        { error: 'Insufficient balance' },
-        { status: 400 }
-      );
-    }
+    const supabase = getServiceSupabase();
 
     // Check market status
     const { data: market, error: marketError } = await supabase
@@ -89,14 +77,20 @@ export async function POST(request) {
     const fee = stake * 0.01;
     const netStake = stake - fee;
 
-    // Start transaction-like operations
-    // 1. Deduct points from user
-    const { error: balanceError } = await supabase
-      .from('users')
-      .update({ points_balance: user.points_balance - stake })
-      .eq('id', userId);
+    // 1. Atomically deduct balance (prevents double-spend)
+    const { data: newBalanceResult, error: deductError } = await supabase
+      .rpc('deduct_balance', { p_user_id: userId, p_amount: stake });
 
-    if (balanceError) throw balanceError;
+    if (deductError) {
+      // Could be insufficient balance or user not found
+      const msg = deductError.message || '';
+      if (msg.includes('Insufficient balance')) {
+        return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
+      }
+      throw deductError;
+    }
+
+    const newBalance = newBalanceResult;
 
     // 2. Create prediction
     const { data: prediction, error: predictionError } = await supabase
@@ -114,29 +108,13 @@ export async function POST(request) {
       .single();
 
     if (predictionError) {
-      // Rollback: restore user balance
-      await supabase
-        .from('users')
-        .update({ points_balance: user.points_balance })
-        .eq('id', userId);
+      // Rollback: restore balance atomically
+      await supabase.rpc('credit_balance', { p_user_id: userId, p_amount: stake });
       throw predictionError;
     }
 
-    // 3. Update outcome total_staked
-    const { data: currentOutcome } = await supabase
-      .from('outcomes')
-      .select('total_staked')
-      .eq('id', outcomeId)
-      .single();
-
-    const newTotal = parseFloat(currentOutcome.total_staked) + netStake;
-    
-    const { error: outcomeUpdateError } = await supabase
-      .from('outcomes')
-      .update({ total_staked: newTotal })
-      .eq('id', outcomeId);
-
-    if (outcomeUpdateError) throw outcomeUpdateError;
+    // 3. Atomically increment outcome total_staked
+    await supabase.rpc('increment_outcome_stake', { p_outcome_id: outcomeId, p_amount: netStake });
 
     // 4. Log activity
     await supabase.rpc('log_activity', {
@@ -149,7 +127,7 @@ export async function POST(request) {
     return NextResponse.json({
       success: true,
       prediction,
-      newBalance: user.points_balance - stake
+      newBalance
     }, { status: 201 });
 
   } catch (error) {
@@ -167,6 +145,18 @@ export async function GET(request) {
     const userId = searchParams.get('userId');
     const marketId = searchParams.get('marketId');
 
+    const supabase = getServiceSupabase();
+
+    const page = Math.max(1, parseInt(searchParams.get('page')) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit')) || 50));
+    const offset = (page - 1) * limit;
+
+    // Get total count
+    let countQuery = supabase.from('predictions').select('id', { count: 'exact', head: true });
+    if (userId) countQuery = countQuery.eq('user_id', userId);
+    if (marketId) countQuery = countQuery.eq('market_id', marketId);
+    const { count: totalCount } = await countQuery;
+
     let query = supabase
       .from('predictions')
       .select(`
@@ -175,7 +165,8 @@ export async function GET(request) {
         market:markets!predictions_market_id_fkey(id, question, status),
         outcome:outcomes!predictions_outcome_id_fkey(id, outcome_text)
       `)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
 
     if (userId) {
       query = query.eq('user_id', userId);
@@ -189,7 +180,15 @@ export async function GET(request) {
 
     if (error) throw error;
 
-    return NextResponse.json({ predictions });
+    return NextResponse.json({
+      predictions,
+      pagination: {
+        page,
+        limit,
+        totalCount: totalCount || 0,
+        totalPages: Math.ceil((totalCount || 0) / limit)
+      }
+    });
 
   } catch (error) {
     console.error('Get predictions error:', error);

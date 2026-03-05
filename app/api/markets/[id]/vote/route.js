@@ -1,13 +1,20 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { getSession } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
 export async function POST(request, { params }) {
   try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+    const userId = session.userId;
+
     const { id } = await params;
-    const { userId, vote } = await request.json();
+    const { vote } = await request.json();
 
     // Validate input
-    if (!userId || !vote) {
+    if (!vote) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
@@ -20,6 +27,8 @@ export async function POST(request, { params }) {
         { status: 400 }
       );
     }
+
+    const supabase = getServiceSupabase();
 
     // Check if market exists and is in proposed status
     const { data: market, error: marketError } = await supabase
@@ -97,9 +106,17 @@ export async function POST(request, { params }) {
     const approvals = votes?.filter(v => v.vote === 'approve').length || 0;
     const rejections = votes?.filter(v => v.vote === 'reject').length || 0;
 
-    // Check if market should be approved (10+ approvals)
+    // Read approval threshold from platform settings
+    const { data: thresholdSetting } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'min_approval_votes')
+      .single();
+    const approvalThreshold = parseInt(thresholdSetting?.value) || 10;
+
+    // Check if market should be approved
     let statusUpdate = null;
-    if (approvals >= 10) {
+    if (approvals >= approvalThreshold) {
       const { error: updateError } = await supabase
         .from('markets')
         .update({ status: 'approved' })
@@ -146,6 +163,7 @@ export async function POST(request, { params }) {
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
+    const supabase = getServiceSupabase();
 
     const { data: votes, error } = await supabase
       .from('approval_votes')

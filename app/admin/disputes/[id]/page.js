@@ -29,17 +29,18 @@ export default function DecideDispute() {
 
   const fetchDispute = async () => {
     try {
-      // We need to find the market with this dispute
+      // Fetch all markets and find the one with this dispute
       const marketsRes = await fetch('/api/markets');
       if (marketsRes.ok) {
-        const markets = await marketsRes.json();
-        const disputedMarkets = markets.filter(m => m.status === 'disputed' || m.status === 'resolved');
+        const marketsData = await marketsRes.json();
+        const allMarkets = marketsData.markets || [];
+        const disputedMarkets = allMarkets.filter(m => m.status === 'disputed' || m.status === 'resolved');
         
         for (const mkt of disputedMarkets) {
           const disputesRes = await fetch(`/api/markets/${mkt.id}/dispute`);
           if (disputesRes.ok) {
-            const disputes = await disputesRes.json();
-            const found = disputes.find(d => d.id === disputeId);
+            const disputesData = await disputesRes.json();
+            const found = (disputesData.disputes || []).find(d => d.id === disputeId);
             if (found) {
               setDispute(found);
               setMarket(mkt);
@@ -81,7 +82,6 @@ export default function DecideDispute() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
           decision,
           adminDecision,
           newWinningOutcomeId: decision === 'overturned' ? newWinningOutcomeId : null
@@ -164,7 +164,7 @@ export default function DecideDispute() {
                 Resolved
               </span>
               <span className="text-zinc-500">
-                Winner: <span className="text-emerald-400 font-medium">{originalWinner?.text}</span>
+                Winner: <span className="text-emerald-400 font-medium">{originalWinner?.outcome_text}</span>
               </span>
             </div>
           </div>
@@ -296,7 +296,7 @@ export default function DecideDispute() {
                       }`}>
                         {newWinningOutcomeId === outcome.id && <CheckCircle className="w-3 h-3 text-white" />}
                       </div>
-                      <p className="text-white font-medium">{outcome.text}</p>
+                      <p className="text-white font-medium">{outcome.outcome_text}</p>
                       {outcome.id === market.winning_outcome_id && (
                         <span className="ml-auto px-2 py-1 bg-purple-500/20 text-purple-400 text-xs rounded-full">
                           Current Winner

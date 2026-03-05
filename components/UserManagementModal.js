@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { X, UserCircle, DollarSign, Shield } from 'lucide-react';
 
-export default function UserManagementModal({ user, onClose, onUpdate, adminUserId }) {
+export default function UserManagementModal({ user, onClose, onUpdate }) {
   const [action, setAction] = useState('');
   const [newBalance, setNewBalance] = useState(user.points_balance || 0);
   const [newRole, setNewRole] = useState(user.role);
@@ -30,7 +30,6 @@ export default function UserManagementModal({ user, onClose, onUpdate, adminUser
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: adminUserId,
           targetUserId: user.id,
           action,
           value: action === 'update_balance' ? parseFloat(newBalance) : newRole

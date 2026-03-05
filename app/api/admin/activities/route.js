@@ -1,27 +1,14 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { requireAdmin } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
 export async function GET(request) {
   try {
+    const session = await requireAdmin();
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
     const limit = parseInt(searchParams.get('limit') || '100');
 
-    // Check if user is admin
-    if (userId) {
-      const { data: user, error: userError } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', userId)
-        .single();
-
-      if (userError || !user || user.role !== 'admin') {
-        return NextResponse.json(
-          { error: 'Unauthorized. Admin access required.' },
-          { status: 403 }
-        );
-      }
-    }
+    const supabase = getServiceSupabase();
 
     // Get recent activities
     const { data: activities, error } = await supabase
@@ -44,6 +31,7 @@ export async function GET(request) {
     return NextResponse.json(activities);
 
   } catch (error) {
+    if (error instanceof Response) return error;
     console.error('Get activities error:', error);
     return NextResponse.json(
       { error: 'Failed to fetch activities' },

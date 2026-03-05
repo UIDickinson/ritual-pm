@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import Navigation from '@/components/Navigation';
@@ -17,8 +17,13 @@ export default function CreateMarketPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (!isAuthenticated || !isMember) {
+      router.push('/login');
+    }
+  }, [isAuthenticated, isMember, router]);
+
   if (!isAuthenticated || !isMember) {
-    router.push('/login');
     return null;
   }
 
@@ -68,7 +73,6 @@ export default function CreateMarketPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
           question: question.trim(),
           description: description.trim() || null,
           outcomes: validOutcomes,

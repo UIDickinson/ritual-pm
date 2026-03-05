@@ -1,0 +1,145 @@
+name: AI Workers
+
+on:
+  schedule:
+    - cron: '*/20 * * * *' # Reddit
+    - cron: '*/15 * * * *' # Telegram + topic processor
+    - cron: '0 2 * * *' # Feedback aggregator
+  workflow_dispatch:
+    inputs:
+      worker:
+        description: Worker to run
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - reddit
+          - telegram
+          - topic-processor
+          - feedback-aggregator
+
+jobs:
+  reddit:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '*/20 * * * *') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.worker == 'all' || inputs.worker == 'reddit'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install worker deps
+        run: npm install --prefix workers
+
+      - name: Run reddit worker
+        env:
+          WORKER_TYPE: reddit
+          RITUAL_API_BASE_URL: ${{ secrets.RITUAL_API_BASE_URL }}
+          AI_SERVICE_TOKEN: ${{ secrets.AI_SERVICE_TOKEN }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          REDDIT_SUBREDDITS: ${{ secrets.REDDIT_SUBREDDITS }}
+          REDDIT_POST_LIMIT: ${{ secrets.REDDIT_POST_LIMIT }}
+        # REDDIT_SUBREDDITS is optional — defaults to popular,worldnews,technology,CryptoCurrency
+        run: node workers/src/index.js
+
+  telegram:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '*/15 * * * *') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.worker == 'all' || inputs.worker == 'telegram'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install worker deps
+        run: npm install --prefix workers
+
+      - name: Run telegram worker
+        env:
+          WORKER_TYPE: telegram
+          RITUAL_API_BASE_URL: ${{ secrets.RITUAL_API_BASE_URL }}
+          AI_SERVICE_TOKEN: ${{ secrets.AI_SERVICE_TOKEN }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALLOWED_CHAT_IDS: ${{ secrets.TELEGRAM_ALLOWED_CHAT_IDS }}
+          TELEGRAM_UPDATE_LIMIT: ${{ secrets.TELEGRAM_UPDATE_LIMIT }}
+          TELEGRAM_UPDATE_OFFSET: ${{ secrets.TELEGRAM_UPDATE_OFFSET }}
+          TELEGRAM_CONTINUOUS: 'false'
+        run: node workers/src/index.js
+
+  topic_processor:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '*/15 * * * *') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.worker == 'all' || inputs.worker == 'topic-processor'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install worker deps
+        run: npm install --prefix workers
+
+      - name: Run topic processor
+        env:
+          WORKER_TYPE: topic-processor
+          RITUAL_API_BASE_URL: ${{ secrets.RITUAL_API_BASE_URL }}
+          AI_SERVICE_TOKEN: ${{ secrets.AI_SERVICE_TOKEN }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          TOPIC_PROCESSOR_DRAIN_LIMIT: ${{ secrets.TOPIC_PROCESSOR_DRAIN_LIMIT }}
+          TOPIC_SCORE_REVIEW_THRESHOLD: ${{ secrets.TOPIC_SCORE_REVIEW_THRESHOLD }}
+          TOPIC_SCORE_HIGH_THRESHOLD: ${{ secrets.TOPIC_SCORE_HIGH_THRESHOLD }}
+          TOPIC_DUPLICATE_THRESHOLD: ${{ secrets.TOPIC_DUPLICATE_THRESHOLD }}
+          DEFAULT_PROPOSAL_RESOLUTION_DAYS: ${{ secrets.DEFAULT_PROPOSAL_RESOLUTION_DAYS }}
+        run: node workers/src/index.js
+
+  feedback_aggregator:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '0 2 * * *') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.worker == 'all' || inputs.worker == 'feedback-aggregator'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install worker deps
+        run: npm install --prefix workers
+
+      - name: Run feedback aggregator
+        env:
+          WORKER_TYPE: feedback-aggregator
+          RITUAL_API_BASE_URL: ${{ secrets.RITUAL_API_BASE_URL }}
+          AI_SERVICE_TOKEN: ${{ secrets.AI_SERVICE_TOKEN }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          FEEDBACK_LOOKBACK_HOURS: ${{ secrets.FEEDBACK_LOOKBACK_HOURS }}
+          MODEL_LEARNING_RATE: ${{ secrets.MODEL_LEARNING_RATE }}
+          MODEL_TUNING_MIN_SAMPLES: ${{ secrets.MODEL_TUNING_MIN_SAMPLES }}
+        run: node workers/src/index.js

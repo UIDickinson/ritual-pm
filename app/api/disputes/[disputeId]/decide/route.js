@@ -1,24 +1,14 @@
-import { supabase } from '@/lib/supabase';
+import { getServiceSupabase } from '@/lib/supabase';
+import { requireAdmin } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
 export async function POST(request, { params }) {
   try {
+    const session = await requireAdmin();
     const { disputeId } = await params;
-    const { userId, decision, adminDecision, newWinningOutcomeId } = await request.json();
+    const { decision, adminDecision, newWinningOutcomeId } = await request.json();
 
-    // Check if user is admin
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', userId)
-      .single();
-
-    if (userError || !user || user.role !== 'admin') {
-      return NextResponse.json(
-        { error: 'Unauthorized. Admin access required.' },
-        { status: 403 }
-      );
-    }
+    const supabase = getServiceSupabase();
 
     // Get dispute
     const { data: dispute, error: disputeError } = await supabase
@@ -55,7 +45,7 @@ export async function POST(request, { params }) {
       .update({
         status: decision,
         admin_decision: adminDecision,
-        decided_by: userId,
+        decided_by: session.userId,
         resolved_at: new Date().toISOString()
       })
       .eq('id', disputeId);
@@ -101,7 +91,7 @@ export async function POST(request, { params }) {
 
     // Log activity
     await supabase.rpc('log_activity', {
-      p_user_id: userId,
+      p_user_id: session.userId,
       p_action_type: 'dispute_decided',
       p_target_id: disputeId,
       p_details: { decision, market_id: dispute.market_id }
@@ -113,6 +103,7 @@ export async function POST(request, { params }) {
     });
 
   } catch (error) {
+    if (error instanceof Response) return error;
     console.error('Decide dispute error:', error);
     return NextResponse.json(
       { error: 'Failed to decide dispute' },
@@ -122,6 +113,7 @@ export async function POST(request, { params }) {
 }
 
 async function reversePreviousPayouts(marketId) {
+  const supabase = getServiceSupabase();
   const { data: predictions } = await supabase
     .from('predictions')
     .select('*')
@@ -129,19 +121,11 @@ async function reversePreviousPayouts(marketId) {
     .eq('paid_out', true);
 
   for (const prediction of predictions) {
-    // Subtract payout from user balance
-    const { data: currentUser } = await supabase
-      .from('users')
-      .select('points_balance')
-      .eq('id', prediction.user_id)
-      .single();
-
-    await supabase
-      .from('users')
-      .update({
-        points_balance: parseFloat(currentUser.points_balance) - parseFloat(prediction.payout_amount || 0)
-      })
-      .eq('id', prediction.user_id);
+    // Atomically deduct payout (safe — won't go below 0)
+    await supabase.rpc('deduct_balance_safe', {
+      p_user_id: prediction.user_id,
+      p_amount: parseFloat(prediction.payout_amount || 0)
+    });
 
     // Reset prediction
     await supabase
@@ -155,6 +139,17 @@ async function reversePreviousPayouts(marketId) {
 }
 
 async function recalculatePayouts(marketId, winningOutcomeId) {
+  const supabase = getServiceSupabase();
+
+  // Get market bonus pool
+  const { data: market } = await supabase
+    .from('markets')
+    .select('bonus_pool')
+    .eq('id', marketId)
+    .single();
+
+  const bonusPool = parseFloat(market?.bonus_pool || 0);
+
   // Get all outcomes
   const { data: outcomes } = await supabase
     .from('outcomes')
@@ -180,11 +175,11 @@ async function recalculatePayouts(marketId, winningOutcomeId) {
     .eq('market_id', marketId)
     .eq('outcome_id', winningOutcomeId);
 
-  // Calculate payouts
+  // Calculate payouts (bonus pool added as extra winnings)
   for (const prediction of winningPredictions) {
     const userStake = parseFloat(prediction.stake_amount);
     const userShare = userStake / winningPool;
-    const winnings = userShare * losingPool;
+    const winnings = userShare * (losingPool + bonusPool);
     const totalPayout = userStake + winnings;
 
     await supabase
@@ -195,18 +190,11 @@ async function recalculatePayouts(marketId, winningOutcomeId) {
       })
       .eq('id', prediction.id);
 
-    const { data: currentUser } = await supabase
-      .from('users')
-      .select('points_balance')
-      .eq('id', prediction.user_id)
-      .single();
-
-    await supabase
-      .from('users')
-      .update({
-        points_balance: parseFloat(currentUser.points_balance) + totalPayout
-      })
-      .eq('id', prediction.user_id);
+    // Atomically credit payout
+    await supabase.rpc('credit_balance', {
+      p_user_id: prediction.user_id,
+      p_amount: totalPayout
+    });
   }
 
   // Mark losers
@@ -227,24 +215,18 @@ async function recalculatePayouts(marketId, winningOutcomeId) {
 }
 
 async function refundAllPredictions(marketId) {
+  const supabase = getServiceSupabase();
   const { data: predictions } = await supabase
     .from('predictions')
     .select('*')
     .eq('market_id', marketId);
 
   for (const prediction of predictions) {
-    const { data: currentUser } = await supabase
-      .from('users')
-      .select('points_balance')
-      .eq('id', prediction.user_id)
-      .single();
-
-    await supabase
-      .from('users')
-      .update({
-        points_balance: parseFloat(currentUser.points_balance) + parseFloat(prediction.stake_amount)
-      })
-      .eq('id', prediction.user_id);
+    // Atomically credit refund
+    await supabase.rpc('credit_balance', {
+      p_user_id: prediction.user_id,
+      p_amount: parseFloat(prediction.stake_amount)
+    });
 
     await supabase
       .from('predictions')
