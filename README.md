@@ -33,6 +33,7 @@ A decentralized prediction market platform for the Ritual Network community, bui
 - AI ingestion and market proposal pipeline for Reddit/Telegram sources
 - Dedicated worker service (`workers/`) with queue-based topic processing
 - Telegram bot with full account integration: link your Ritual account, vote on proposals, check balance, and submit markets — all from Telegram
+- **@mention market suggestions**: tag the bot in a group (replying to a message) and it uses Gemini to generate a market proposal based on the conversation context. Admins confirm/cancel via DM
 - Telegram command state persisted via platform settings (listen chat IDs + update offset)
 
 ## Tech Stack
@@ -179,7 +180,7 @@ Telegram worker runtime options:
 | `/start` | Welcome message with keyboard shortcuts |
 | `/link username password` | Link your Ritual account. Credential message is immediately deleted for security |
 | `/balance` | View your points balance, prediction stats, and win/loss record |
-| `/create question \| description \| YYYY-MM-DD` | Submit a market proposal (DM only, linked account required) |
+| `/create question \| description \| YYYY-MM-DD` | Submit a market proposal (DM only, linked account required). Add a 4th field for custom outcomes: `\| opt1, opt2, opt3` (2-5 options) |
 
 **Market commands (groups or DM)**
 
@@ -197,6 +198,14 @@ Telegram worker runtime options:
 | `/peek` | Analyze recent messages and generate proposal candidates |
 | `/help` | Show command reference |
 
+**@mention (groups only)**
+
+| Action | Description |
+|---|---|
+| Reply to a message and tag `@YourBot` | Bot reads the replied message + recent chat context, uses Gemini to suggest a market, and DMs the admin a proposal with Submit/Cancel buttons |
+
+> **Tip:** Reply to the most relevant message when tagging the bot — the replied message is treated as primary context for generating the suggestion.
+
 ### Telegram Setup Checklist
 
 1. Create bot in Telegram via `@BotFather` and copy `TELEGRAM_BOT_TOKEN`.
@@ -208,11 +217,14 @@ Telegram worker runtime options:
    - `AI_SERVICE_TOKEN` matching app value exactly
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_ALLOWED_CHAT_IDS` (optional allowlist)
+   - `GEMINI_API_KEY` (required for @mention market suggestions)
 4. Run migration `database/migrations/20260306_008_telegram_user_linking.sql` in Supabase.
-5. Start the app (`npm run dev`) and worker (`cd workers && npm start`).
-6. In Telegram, run `/listen` in the group/channel to enable ingestion.
-7. DM the bot `/link username password` to connect your Ritual account.
-8. Use `/vote` to approve/reject proposals, `/balance` to check your account, `/create` to submit markets.
+5. **Important:** Message the bot privately at least once (e.g. `/start`) so it can DM you @mention suggestions.
+6. Start the app (`npm run dev`) and worker (`cd workers && npm start`).
+7. In Telegram, run `/listen` in the group/channel to enable ingestion.
+8. DM the bot `/link username password` to connect your Ritual account.
+9. Use `/vote` to approve/reject proposals, `/balance` to check your account, `/create` to submit markets.
+10. To suggest a market from chat context, reply to a message and tag the bot.
 
 See `workers/README.md` for Docker and managed-service deployment notes.
 
@@ -268,7 +280,8 @@ Run these SQL files in your Supabase project:
 6. `database/migrations/20260218_005_composite_indexes.sql`
 7. `database/migrations/20260219_006_ai_pipeline_control.sql`
 8. `database/migrations/20260219_007_proposals_generated_by.sql`
-9. `database/seed.sql` (optional)
+9. `database/migrations/20260306_008_telegram_user_linking.sql`
+10. `database/seed.sql` (optional)
 
 ### 3. Configure GitHub Actions workers
 
@@ -331,6 +344,13 @@ For scheduled worker runs, keep `TELEGRAM_CONTINUOUS=false` so each cron run exe
 - Not enough recent meaningful messages in the past hour.
 - Topic suitability/duplicate filters may reject candidates.
 - Try with more specific, event-driven messages and rerun `/peek`.
+
+### @mention suggestion not working
+- The bot must have `/listen` enabled in the group.
+- `GEMINI_API_KEY` must be set in the worker environment.
+- Only admins can trigger @mention suggestions.
+- Reply to a specific message for best results — the replied message is treated as primary context.
+- If the bot can't DM you, message it privately first (e.g. `/start`) to open the DM channel.
 
 ## Market Lifecycle
 

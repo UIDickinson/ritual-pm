@@ -17,6 +17,7 @@ import {
   upsertTopics
 } from '../client/ritualApi.js';
 import { enqueueRawMessages } from '../queue/rawQueue.js';
+import { generateJSON } from '../llm/gemini.js';
 import { computeEngagementScore } from '../pipeline/engagementScorer.js';
 import { generateMarketProposal } from '../pipeline/marketGenerator.js';
 import { normalizeMessage } from '../pipeline/normalize.js';
@@ -142,12 +143,23 @@ async function telegramApiCall(botToken, method, params = {}) {
 }
 
 async function sendMessage(botToken, chatId, text, extra = {}) {
-  return telegramApiCall(botToken, 'sendMessage', {
-    chat_id: chatId,
-    text,
-    parse_mode: 'Markdown',
-    ...extra
-  });
+  try {
+    return await telegramApiCall(botToken, 'sendMessage', {
+      chat_id: chatId,
+      text,
+      parse_mode: 'Markdown',
+      ...extra
+    });
+  } catch (error) {
+    if (error.message?.includes("can't parse entities")) {
+      return telegramApiCall(botToken, 'sendMessage', {
+        chat_id: chatId,
+        text,
+        ...extra
+      });
+    }
+    throw error;
+  }
 }
 
 async function answerCallback(botToken, callbackQueryId, text) {
@@ -193,6 +205,299 @@ async function isGroupAdmin(botToken, chatId, userId) {
     return ['creator', 'administrator'].includes(member?.status);
   } catch {
     return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bot mention detection
+// ---------------------------------------------------------------------------
+
+let cachedBotUsername = null;
+
+async function getBotUsername(botToken) {
+  if (cachedBotUsername) return cachedBotUsername;
+  try {
+    const me = await telegramApiCall(botToken, 'getMe');
+    cachedBotUsername = (me.username || '').toLowerCase();
+  } catch {
+    cachedBotUsername = '';
+  }
+  return cachedBotUsername;
+}
+
+function isBotMentioned(message, botUsername) {
+  if (!botUsername) return false;
+  const entities = message.entities || [];
+  for (const entity of entities) {
+    if (entity.type === 'mention') {
+      const mentionText = (message.text || '').substring(entity.offset, entity.offset + entity.length);
+      if (mentionText.toLowerCase() === `@${botUsername}`) return true;
+    }
+  }
+  return false;
+}
+
+function stripBotMention(text, botUsername) {
+  if (!botUsername) return text;
+  return text.replace(new RegExp(`@${botUsername}`, 'gi'), '').trim();
+}
+
+// ---------------------------------------------------------------------------
+// Pending mention suggestions (in-memory, keyed by `chatId:userId`)
+// ---------------------------------------------------------------------------
+
+const pendingMentionSuggestions = new Map();
+
+// ---------------------------------------------------------------------------
+// In-memory chat message buffer (per chat, last 50 messages, for mention context)
+// ---------------------------------------------------------------------------
+
+const chatMessageBuffer = new Map();
+const MAX_BUFFERED_MESSAGES = 50;
+
+function bufferChatMessage(chatId, rawMessage) {
+  if (!chatId || !rawMessage) return;
+  let buffer = chatMessageBuffer.get(chatId);
+  if (!buffer) {
+    buffer = [];
+    chatMessageBuffer.set(chatId, buffer);
+  }
+  buffer.push(rawMessage);
+  if (buffer.length > MAX_BUFFERED_MESSAGES) {
+    buffer.splice(0, buffer.length - MAX_BUFFERED_MESSAGES);
+  }
+}
+
+function getBufferedMessages(chatId) {
+  return chatMessageBuffer.get(chatId) || [];
+}
+
+const MENTION_SUGGESTION_PROMPT = `You are a prediction-market designer for the Ritual platform.
+You are given a user's request and recent group chat messages for context.
+Your job is to design ONE compelling prediction market that is DIRECTLY based on the specific facts, events, and topics discussed in the chat messages.
+
+CRITICAL RULES:
+1. The market MUST be grounded in the ACTUAL content of the chat messages. Reference specific facts, numbers, tokens, events, or announcements from the messages.
+2. Do NOT invent or assume topics that were not discussed. If the chat talks about token burns and staking, the market should be about token burns and staking — not about unrelated partnerships or generic future events.
+3. The question (title) must be clear, specific, and time-bound.
+4. Outcomes must be mutually exclusive. Use ["Yes","No"] for binary questions, or 2-5 richer options for multi-outcome markets.
+5. Description should reference the specific details from the chat (e.g. exact numbers, percentages, announcements mentioned).
+6. Pick a realistic resolution date relevant to the topic discussed.
+
+Return ONLY valid JSON:
+{
+  "title": "string (max 120 chars)",
+  "description": "string (max 500 chars)",
+  "outcomes": ["string", ...],
+  "resolutionDate": "ISO-8601 date string"
+}`;
+
+async function generateMentionSuggestion(userRequest, recentMessages, repliedText) {
+  const chatContext = recentMessages
+    .slice(-30)
+    .map((m) => `[${m.authorId}]: ${m.text}`)
+    .join('\n');
+
+  const parts = [`User request: ${userRequest}`];
+
+  if (repliedText) {
+    parts.push(`\nPRIMARY CONTEXT — the user replied to this specific message, base the market on it:\n---\n${repliedText}\n---`);
+  }
+
+  if (chatContext) {
+    parts.push(`\nAdditional recent group messages for background:\n${chatContext}`);
+  }
+
+  parts.push(`\nToday: ${new Date().toISOString().split('T')[0]}`);
+
+  return generateJSON(MENTION_SUGGESTION_PROMPT, parts.join('\n'), {
+    temperature: 0.7,
+    maxTokens: 1024
+  });
+}
+
+async function handleBotMention({ botToken, message, listenChatIds }) {
+  const chatId = String(message.chat?.id || '');
+  const chatType = message.chat?.type || 'private';
+  const userId = message.from?.id;
+  const botUsername = await getBotUsername(botToken);
+  const userText = stripBotMention(message.text || '', botUsername);
+
+  if (!['group', 'supergroup'].includes(chatType)) return;
+
+  // Require /listen to be active
+  if (!listenChatIds.has(chatId)) {
+    await sendMessage(botToken, chatId, 'Ingestion is not active for this group. An admin needs to run /listen first.');
+    return;
+  }
+
+  // Require group admin
+  const admin = await isGroupAdmin(botToken, chatId, userId);
+  if (!admin) {
+    await sendMessage(botToken, chatId, 'Only group admins can request market suggestions via mention.');
+    return;
+  }
+
+  if (!userText && !message.reply_to_message) {
+    await sendMessage(
+      botToken,
+      chatId,
+      `To suggest a market, *reply to a message* in the group and tag me with your request.\n\nExample: reply to a message about ETH and write:\n@${botUsername} create a prediction market about this`
+    );
+    return;
+  }
+
+  if (!process.env.GEMINI_API_KEY) {
+    await sendMessage(botToken, chatId, 'Market suggestion requires GEMINI_API_KEY to be configured.');
+    return;
+  }
+
+  // Build context from the replied-to message (primary) + any buffered messages (secondary)
+  let repliedText = null;
+  if (message.reply_to_message?.text) {
+    repliedText = message.reply_to_message.text;
+  } else if (message.reply_to_message?.caption) {
+    repliedText = message.reply_to_message.caption;
+  }
+
+  const recentMessages = getBufferedMessages(chatId);
+
+  if (!repliedText && !recentMessages.length) {
+    await sendMessage(
+      botToken,
+      chatId,
+      `I don't have enough context. *Reply to the message* you want me to base a market on, then tag me.\n\nExample: reply to a message and write:\n@${botUsername} create a market about this`
+    );
+    return;
+  }
+
+  await sendMessage(botToken, chatId, '🔍 Analyzing and generating a market suggestion...');
+
+  try {
+    const suggestion = await generateMentionSuggestion(userText || 'create a prediction market based on this', recentMessages, repliedText);
+
+    if (!suggestion.title || !suggestion.outcomes || suggestion.outcomes.length < 2) {
+      await sendMessage(botToken, chatId, "Couldn't generate a valid market from that context. Try being more specific.");
+      return;
+    }
+
+    // Store the suggestion keyed by chatId:userId for the confirm callback
+    const suggestionKey = `${chatId}:${userId}`;
+    pendingMentionSuggestions.set(suggestionKey, {
+      ...suggestion,
+      chatId,
+      userId,
+      createdAt: Date.now()
+    });
+
+    // Clean up old suggestions (>10 min)
+    for (const [key, val] of pendingMentionSuggestions) {
+      if (Date.now() - val.createdAt > 600000) pendingMentionSuggestions.delete(key);
+    }
+
+    const outcomesLine = suggestion.outcomes.join(', ');
+    const closeDate = suggestion.resolutionDate
+      ? new Date(suggestion.resolutionDate).toISOString().slice(0, 10)
+      : 'TBD';
+
+    // DM the admin with the suggestion
+    try {
+      const dmText = [
+        `📊 *Market Suggestion* (from group: ${message.chat?.title || chatId})`,
+        '',
+        `*${suggestion.title}*`,
+        '',
+        suggestion.description || '',
+        '',
+        `Outcomes: ${outcomesLine}`,
+        `Closes: ${closeDate}`,
+        '',
+        'Tap below to submit as a proposal or cancel.'
+      ].join('\n');
+
+      await sendMessage(botToken, userId, dmText, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ Submit as Proposal', callback_data: `mention:confirm:${chatId}` },
+              { text: '❌ Cancel', callback_data: `mention:cancel:${chatId}` }
+            ]
+          ]
+        }
+      });
+
+      await sendMessage(botToken, chatId, '✅ Market suggestion sent to your DMs for review.');
+    } catch {
+      // Can't DM — user hasn't started the bot in DM. Send in group instead.
+      await sendMessage(botToken, chatId, [
+        `📊 *Market Suggestion*`,
+        '',
+        `*${suggestion.title}*`,
+        suggestion.description || '',
+        `Outcomes: ${outcomesLine}`,
+        `Closes: ${closeDate}`,
+        '',
+        `⚠️ I couldn't DM you. Please DM me /start first, then try again.`
+      ].join('\n'));
+    }
+  } catch (error) {
+    await sendMessage(botToken, chatId, `Failed to generate suggestion: ${error.message}`);
+  }
+}
+
+async function handleMentionConfirmCallback(botToken, callbackQuery) {
+  const callbackData = String(callbackQuery.data || '');
+  const [, action, sourceChatId] = callbackData.split(':');
+  const userId = callbackQuery.from?.id;
+  const dmChatId = callbackQuery.message?.chat?.id;
+  const msgId = callbackQuery.message?.message_id;
+
+  // Remove buttons immediately
+  await editMessageReplyMarkup(botToken, dmChatId, msgId, { inline_keyboard: [] });
+
+  if (action === 'cancel') {
+    await answerCallback(botToken, callbackQuery.id, 'Cancelled');
+    await sendMessage(botToken, dmChatId, '🗑️ Suggestion cancelled.');
+    return;
+  }
+
+  const suggestionKey = `${sourceChatId}:${userId}`;
+  const suggestion = pendingMentionSuggestions.get(suggestionKey);
+
+  if (!suggestion) {
+    await answerCallback(botToken, callbackQuery.id, 'Suggestion expired');
+    await sendMessage(botToken, dmChatId, '⏰ This suggestion has expired. Tag me again in the group to regenerate.');
+    return;
+  }
+
+  pendingMentionSuggestions.delete(suggestionKey);
+
+  try {
+    const result = await createTelegramMarket({
+      question: suggestion.title,
+      description: suggestion.description || null,
+      closeTime: suggestion.resolutionDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      outcomes: suggestion.outcomes,
+      makeLive: false,
+      requestedBy: {
+        telegramUserId: userId,
+        telegramUsername: callbackQuery.from?.username || null,
+        chatId: sourceChatId,
+        chatType: 'group',
+        command: '@mention',
+        linkedUserId: null
+      }
+    });
+
+    await answerCallback(botToken, callbackQuery.id, 'Proposal submitted!');
+    await sendMessage(
+      botToken,
+      dmChatId,
+      `✅ Market proposal submitted: *${result.market?.question || suggestion.title}*\n\nIt will go through community voting before going live.`
+    );
+  } catch (error) {
+    await answerCallback(botToken, callbackQuery.id, 'Submission failed');
+    await sendMessage(botToken, dmChatId, `❌ Failed to submit proposal: ${error.message}`);
   }
 }
 
@@ -849,6 +1154,11 @@ async function runTelegramWorkerCycle() {
       continue;
     }
 
+    if (update.callback_query?.data?.startsWith('mention:')) {
+      await handleMentionConfirmCallback(botToken, update.callback_query);
+      continue;
+    }
+
     const message = extractMessageFromUpdate(update);
     if (!message) continue;
 
@@ -873,8 +1183,27 @@ async function runTelegramWorkerCycle() {
       continue;
     }
 
+    // Check for bot mention (non-command messages in groups)
+    const botUsername = await getBotUsername(botToken);
+    if (botUsername && isBotMentioned(message, botUsername)) {
+      try {
+        await handleBotMention({ botToken, message, listenChatIds, updates });
+      } catch (error) {
+        const chatId = String(message.chat?.id || '');
+        if (chatId) {
+          await sendMessage(botToken, chatId, `Mention handling failed: ${error.message}`);
+        }
+      }
+      continue;
+    }
+
     const rawMessage = buildRawMessageFromTelegram(message);
     if (!rawMessage) continue;
+
+    // Buffer all group messages for @mention context (before filtering)
+    if (['group', 'supergroup', 'channel'].includes(message.chat?.type || '')) {
+      bufferChatMessage(rawMessage.sourceChatId, rawMessage);
+    }
 
     if (!listenChatIds.has(rawMessage.sourceChatId)) continue;
     if (allowedChatIds.size > 0 && !allowedChatIds.has(rawMessage.sourceChatId)) continue;

@@ -142,6 +142,8 @@ Complete setup instructions for the Next.js prediction-market app **and** the v2
 
 **Account linking** allows Telegram users to link their Ritual account so they can vote on proposals, check their balance, and submit markets via bot commands. Users run `/link username password` in a DM — the bot deletes the message immediately after processing for security.
 
+**@mention market suggestions:** Admins can reply to a message in the group and tag the bot to generate an AI market suggestion based on the conversation. The bot uses Gemini to analyze the replied message (primary context) plus recent chat history, then DMs the admin a proposal with Submit/Cancel buttons. Requires `GEMINI_API_KEY` in the worker environment.
+
 > Users without an account should register at `https://ritual-market.vercel.app/register` before linking.
 
 ### 2e. Generate Shared Secrets
@@ -356,6 +358,7 @@ REDIS_URL=rediss://your-upstash-url
 TELEGRAM_BOT_TOKEN=your-bot-token
 TELEGRAM_ALLOWED_CHAT_IDS=-100123456789
 TELEGRAM_CONTINUOUS=false
+GEMINI_API_KEY=your-gemini-key
 ```
 
 **Topic Processor** (Cron: `*/15 * * * *`)
@@ -408,7 +411,7 @@ The same Docker image works anywhere. Key points:
 | `RITUAL_API_BASE_URL` | ✅ | all | — | The deployed Next.js app URL |
 | `AI_SERVICE_TOKEN` | ✅ | all | — | Must match the app's `AI_SERVICE_TOKEN` |
 | `REDIS_URL` | ✅ | all | — | Redis connection string |
-| `GEMINI_API_KEY` | recommended | topic-processor, feedback-aggregator | — | Enables LLM-powered generation (falls back to heuristic without it) |
+| `GEMINI_API_KEY` | recommended | topic-processor, feedback-aggregator, telegram | — | Enables LLM-powered generation (falls back to heuristic without it). Required for Telegram @mention suggestions |
 | `GEMINI_MODEL` | — | topic-processor, feedback-aggregator | `gemini-2.0-flash` | Gemini model to use |
 | `REDDIT_SUBREDDITS` | ✅ reddit | reddit | — | Comma-separated subreddit names |
 | `REDDIT_POST_LIMIT` | — | reddit | `25` | Posts per subreddit per run |
@@ -443,6 +446,7 @@ database/migrations/20260218_004_bonus_pool_column.sql             # bonus pool
 database/migrations/20260218_005_composite_indexes.sql             # performance indexes
 database/migrations/20260219_006_ai_pipeline_control.sql           # pipeline control defaults
 database/migrations/20260219_007_proposals_generated_by.sql        # proposal attribution
+database/migrations/20260306_008_telegram_user_linking.sql          # telegram account linking
 database/seed.sql                                             # default platform settings
 ```
 
