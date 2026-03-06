@@ -32,7 +32,7 @@ A decentralized prediction market platform for the Ritual Network community, bui
 ### AI + Telegram Features
 - AI ingestion and market proposal pipeline for Reddit/Telegram sources
 - Dedicated worker service (`workers/`) with queue-based topic processing
-- Telegram command bot with `/help`, `/listen`, `/stop`, `/peek`, `/create`, and `/list`
+- Telegram bot with full account integration: link your Ritual account, vote on proposals, check balance, and submit markets — all from Telegram
 - Telegram command state persisted via platform settings (listen chat IDs + update offset)
 
 ## Tech Stack
@@ -168,20 +168,34 @@ Telegram worker runtime options:
 - `TELEGRAM_CONTINUOUS=true` (default): long-running bot polling loop (best for local/manual hosting)
 - `TELEGRAM_CONTINUOUS=false`: one-shot polling cycle (best for cron/GitHub Actions)
 - `TELEGRAM_POLL_INTERVAL_MS=5000` (default): loop interval for continuous mode
-- `TELEGRAM_MARKET_CREATOR_USER_ID=<users.id>` (optional): explicit creator for `/create` market insertion
+- `RITUAL_WEBSITE_URL`: public-facing site URL shown in bot messages (defaults to `RITUAL_API_BASE_URL`)
 
 ### Telegram Bot Commands
 
-After starting the Telegram worker and adding the bot to a group/channel:
+**Account commands (DM the bot)**
 
-- `/help` - show command usage
-- `/listen` - enable ingestion for the current chat
-- `/stop` - disable ingestion for the current chat
-- `/peek` - run quick analysis on recent messages and generate proposal candidates
-- `/create question | optional description | optional YYYY-MM-DD`
-   - Group/channel admin invocation creates a `live` market
-   - DM/non-admin invocation creates a `proposed` market
-- `/list` - choose `Proposed` or `Live`, then bot returns latest markets
+| Command | Description |
+|---|---|
+| `/start` | Welcome message with keyboard shortcuts |
+| `/link username password` | Link your Ritual account. Credential message is immediately deleted for security |
+| `/balance` | View your points balance, prediction stats, and win/loss record |
+| `/create question \| description \| YYYY-MM-DD` | Submit a market proposal (DM only, linked account required) |
+
+**Market commands (groups or DM)**
+
+| Command | Description |
+|---|---|
+| `/vote` | Show proposed markets with inline Approve/Reject buttons. Auto-deletes after 1 min |
+| `/list` | Choose Proposed or Live markets — inline buttons disappear after selection |
+
+**Group/channel management**
+
+| Command | Description |
+|---|---|
+| `/listen` | Enable message ingestion for this group/channel |
+| `/stop` | Disable ingestion for this group/channel |
+| `/peek` | Analyze recent messages and generate proposal candidates |
+| `/help` | Show command reference |
 
 ### Telegram Setup Checklist
 
@@ -189,15 +203,18 @@ After starting the Telegram worker and adding the bot to a group/channel:
 2. Add the bot to your target group/channel.
 3. Ensure worker env has:
    - `WORKER_TYPE=telegram`
-   - `RITUAL_API_BASE_URL` pointing to your app
+   - `RITUAL_API_BASE_URL` pointing to your app (used for API calls)
+   - `RITUAL_WEBSITE_URL` pointing to your public site (shown in bot messages, e.g. `https://ritual-market.vercel.app`)
    - `AI_SERVICE_TOKEN` matching app value exactly
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_ALLOWED_CHAT_IDS` (optional allowlist)
-4. Start the app (`npm run dev`) and worker (`cd workers && WORKER_TYPE=telegram npm start`).
-5. In Telegram, run `/help`, then `/listen` in the group/channel to enable ingestion.
-6. Send test messages and run `/peek` to generate proposal candidates.
+4. Run migration `database/migrations/20260306_008_telegram_user_linking.sql` in Supabase.
+5. Start the app (`npm run dev`) and worker (`cd workers && npm start`).
+6. In Telegram, run `/listen` in the group/channel to enable ingestion.
+7. DM the bot `/link username password` to connect your Ritual account.
+8. Use `/vote` to approve/reject proposals, `/balance` to check your account, `/create` to submit markets.
 
-4. See `workers/README.md` for Docker and managed-service deployment notes.
+See `workers/README.md` for Docker and managed-service deployment notes.
 
 Recommended managed cron schedule:
 - Reddit: every 20 minutes
@@ -268,7 +285,7 @@ In GitHub -> Settings -> Secrets and variables -> Actions, add:
 - `TELEGRAM_UPDATE_OFFSET` (optional)
 - `TELEGRAM_CONTINUOUS` (set to `false` for scheduled runs)
 - `TELEGRAM_POLL_INTERVAL_MS` (optional)
-- `TELEGRAM_MARKET_CREATOR_USER_ID` (optional but recommended)
+- `RITUAL_WEBSITE_URL` (public site URL shown in bot messages)
 - `GEMINI_API_KEY`
 - `GEMINI_MODEL` (optional)
 - `TOPIC_PROCESSOR_DRAIN_LIMIT` (optional)
@@ -305,9 +322,10 @@ For scheduled worker runs, keep `TELEGRAM_CONTINUOUS=false` so each cron run exe
 - Check `TELEGRAM_ALLOWED_CHAT_IDS` includes that chat ID (or leave empty to disable allowlist).
 - Use `/stop` then `/listen` again to refresh listen state.
 
-### `/create` fails to create market
-- Ensure `TELEGRAM_MARKET_CREATOR_USER_ID` is set to a valid `users.id`, or at least one admin exists.
-- Validate close date in `/create` is in the future.
+### `/create` fails or says account not linked
+- `/create` requires a linked Ritual account. DM the bot `/link username password` first.
+- `/create` only works in DMs, not groups.
+- Validate close date is in the future.
 
 ### `/peek` returns 0 proposals
 - Not enough recent meaningful messages in the past hour.

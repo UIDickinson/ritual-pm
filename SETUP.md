@@ -102,7 +102,10 @@ Complete setup instructions for the Next.js prediction-market app **and** the v2
 -- 8. Proposal attribution column
 -- Paste contents of: database/migrations/20260219_007_proposals_generated_by.sql
 
--- 9. Default platform settings
+-- 9. Telegram account linking
+-- Paste contents of: database/migrations/20260306_008_telegram_user_linking.sql
+
+-- 10. Default platform settings
 -- Paste contents of: database/seed.sql
 ```
 
@@ -129,13 +132,17 @@ Complete setup instructions for the Next.js prediction-market app **and** the v2
 2. Create a new API key → `GEMINI_API_KEY`
 3. The default model is `gemini-2.0-flash` (fast + free tier eligible)
 
-### 2d. Telegram Bot (optional, for Telegram ingestion)
+### 2d. Telegram Bot (optional, for Telegram ingestion + account integration)
 
 1. Message [@BotFather](https://t.me/BotFather) on Telegram → `/newbot`
 2. Copy the bot token → `TELEGRAM_BOT_TOKEN`
 3. Add the bot to your desired group/channel
 4. Get the chat ID (send a message, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates`)
 5. Note the chat ID → `TELEGRAM_ALLOWED_CHAT_IDS`
+
+**Account linking** allows Telegram users to link their Ritual account so they can vote on proposals, check their balance, and submit markets via bot commands. Users run `/link username password` in a DM — the bot deletes the message immediately after processing for security.
+
+> Users without an account should register at `https://ritual-market.vercel.app/register` before linking.
 
 ### 2e. Generate Shared Secrets
 
@@ -275,7 +282,7 @@ npm start
 | `JWT_SECRET` | your strong secret (min 32 chars) |
 | `AI_SERVICE_TOKEN` | your shared bearer token |
 
-5. Deploy. Note the production URL (e.g. `https://ritual-pm.vercel.app`)
+5. Deploy. Note the production URL (e.g. `https://ritual-market.vercel.app`)
 
 ### 4b. Workers — Option A: GitHub Actions (Free)
 
@@ -295,6 +302,7 @@ This is the **zero-cost** option. Workers run as scheduled GitHub Actions jobs.
 | `REDDIT_POST_LIMIT` | `25` | optional |
 | `TELEGRAM_BOT_TOKEN` | your bot token | if using Telegram |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | comma-separated chat IDs | if using Telegram |
+| `RITUAL_WEBSITE_URL` | `https://ritual-market.vercel.app` | if using Telegram (shown in bot messages) |
 | `TELEGRAM_UPDATE_LIMIT` | `100` | optional |
 | `TELEGRAM_UPDATE_OFFSET` | `0` | optional |
 | `TELEGRAM_CONTINUOUS` | `false` | recommended for scheduled runs |
@@ -342,6 +350,7 @@ REDDIT_SUBREDDITS=predictionmarkets,polymarket
 ```
 WORKER_TYPE=telegram
 RITUAL_API_BASE_URL=https://your-app.vercel.app
+RITUAL_WEBSITE_URL=https://ritual-market.vercel.app
 AI_SERVICE_TOKEN=your-shared-token
 REDIS_URL=rediss://your-upstash-url
 TELEGRAM_BOT_TOKEN=your-bot-token
@@ -404,12 +413,12 @@ The same Docker image works anywhere. Key points:
 | `REDDIT_SUBREDDITS` | ✅ reddit | reddit | — | Comma-separated subreddit names |
 | `REDDIT_POST_LIMIT` | — | reddit | `25` | Posts per subreddit per run |
 | `TELEGRAM_BOT_TOKEN` | ✅ telegram | telegram | — | Telegram bot token |
-| `TELEGRAM_ALLOWED_CHAT_IDS` | ✅ telegram | telegram | — | Comma-separated chat IDs |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | — | telegram | — | Optional comma-separated chat ID allowlist |
+| `RITUAL_WEBSITE_URL` | — | telegram | *(RITUAL_API_BASE_URL)* | Public-facing site URL shown in bot messages (set to `https://ritual-market.vercel.app`) |
 | `TELEGRAM_UPDATE_LIMIT` | — | telegram | `100` | Max updates per poll |
 | `TELEGRAM_UPDATE_OFFSET` | — | telegram | — | Offset cursor for dedup |
 | `TELEGRAM_CONTINUOUS` | — | telegram | `true` | Set `false` for cron/scheduled runs; `true` for long-running polling |
 | `TELEGRAM_POLL_INTERVAL_MS` | — | telegram | `5000` | Poll interval used in continuous mode |
-| `TELEGRAM_MARKET_CREATOR_USER_ID` | — | telegram | — | Optional explicit `users.id` for `/create` market insertion |
 | `TOPIC_PROCESSOR_DRAIN_LIMIT` | — | topic-processor | `200` | Max messages to drain per run |
 | `TOPIC_SCORE_REVIEW_THRESHOLD` | — | topic-processor | `0.5` | Min score for "scored" status |
 | `TOPIC_SCORE_HIGH_THRESHOLD` | — | topic-processor | `0.75` | Min score for proposal generation |

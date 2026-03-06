@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
 import { requireAiServiceAuth } from '@/lib/aiServiceAuth';
+import bcrypt from 'bcryptjs';
 
 const LISTEN_KEY = 'telegram_listen_chat_ids';
 const OFFSET_KEY = 'telegram_update_offset';
@@ -206,6 +207,237 @@ export async function POST(request) {
           outcomes
         }
       });
+    }
+
+    if (action === 'link_account') {
+      const username = String(body.username || '').trim();
+      const password = String(body.password || '');
+      const telegramUserId = Number(body.telegramUserId);
+
+      if (!username || !password || !Number.isFinite(telegramUserId)) {
+        return NextResponse.json({ error: 'username, password, and telegramUserId are required' }, { status: 400 });
+      }
+
+      const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('id, username, password_hash, role, points_balance')
+        .eq('username', username)
+        .single();
+
+      if (userError || !user) {
+        return NextResponse.json({ error: 'invalid_credentials' }, { status: 401 });
+      }
+
+      const isValid = await bcrypt.compare(password, user.password_hash);
+      if (!isValid) {
+        return NextResponse.json({ error: 'invalid_credentials' }, { status: 401 });
+      }
+
+      const { data: existing } = await supabase
+        .from('users')
+        .select('id, username')
+        .eq('telegram_user_id', telegramUserId)
+        .single();
+
+      if (existing && existing.id !== user.id) {
+        return NextResponse.json({ error: 'telegram_already_linked', linkedUsername: existing.username }, { status: 409 });
+      }
+
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ telegram_user_id: telegramUserId })
+        .eq('id', user.id);
+
+      if (updateError) throw updateError;
+
+      return NextResponse.json({
+        success: true,
+        user: { id: user.id, username: user.username, role: user.role, points_balance: user.points_balance }
+      });
+    }
+
+    if (action === 'get_balance') {
+      const telegramUserId = Number(body.telegramUserId);
+      if (!Number.isFinite(telegramUserId)) {
+        return NextResponse.json({ error: 'telegramUserId is required' }, { status: 400 });
+      }
+
+      const { data: user } = await supabase
+        .from('users')
+        .select('id, username, role, points_balance')
+        .eq('telegram_user_id', telegramUserId)
+        .single();
+
+      if (!user) {
+        return NextResponse.json({ error: 'not_linked' }, { status: 404 });
+      }
+
+      const { count: totalPredictions } = await supabase
+        .from('predictions')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id);
+
+      const { count: wins } = await supabase
+        .from('predictions')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .gt('payout_amount', 0);
+
+      const { count: totalVotes } = await supabase
+        .from('approval_votes')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id);
+
+      return NextResponse.json({
+        success: true,
+        user: {
+          username: user.username,
+          role: user.role,
+          points_balance: user.points_balance
+        },
+        stats: {
+          total_predictions: totalPredictions || 0,
+          wins: wins || 0,
+          losses: (totalPredictions || 0) - (wins || 0),
+          total_votes: totalVotes || 0
+        }
+      });
+    }
+
+    if (action === 'get_proposals') {
+      const { data: proposals } = await supabase
+        .from('markets')
+        .select('id, question, status, close_time, created_at')
+        .eq('status', 'proposed')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      const telegramUserId = Number(body.telegramUserId);
+      let votedMarketIds = [];
+      if (Number.isFinite(telegramUserId)) {
+        const { data: user } = await supabase
+          .from('users')
+          .select('id')
+          .eq('telegram_user_id', telegramUserId)
+          .single();
+
+        if (user && proposals?.length) {
+          const { data: votes } = await supabase
+            .from('approval_votes')
+            .select('market_id')
+            .eq('user_id', user.id)
+            .in('market_id', proposals.map((p) => p.id));
+
+          votedMarketIds = (votes || []).map((v) => v.market_id);
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        proposals: (proposals || []).map((p) => ({
+          ...p,
+          already_voted: votedMarketIds.includes(p.id)
+        }))
+      });
+    }
+
+    if (action === 'cast_vote') {
+      const telegramUserId = Number(body.telegramUserId);
+      const marketId = String(body.marketId || '').trim();
+      const vote = String(body.vote || '').trim();
+
+      if (!Number.isFinite(telegramUserId) || !marketId || !['approve', 'reject'].includes(vote)) {
+        return NextResponse.json({ error: 'telegramUserId, marketId, and vote (approve|reject) are required' }, { status: 400 });
+      }
+
+      const { data: user } = await supabase
+        .from('users')
+        .select('id, username')
+        .eq('telegram_user_id', telegramUserId)
+        .single();
+
+      if (!user) {
+        return NextResponse.json({ error: 'not_linked' }, { status: 404 });
+      }
+
+      const { data: market } = await supabase
+        .from('markets')
+        .select('id, status, creator_id, approval_deadline')
+        .eq('id', marketId)
+        .single();
+
+      if (!market) {
+        return NextResponse.json({ error: 'Market not found' }, { status: 404 });
+      }
+
+      if (market.status !== 'proposed') {
+        return NextResponse.json({ error: 'Market is not in proposed status' }, { status: 400 });
+      }
+
+      if (market.creator_id === user.id) {
+        return NextResponse.json({ error: 'Cannot vote on your own market' }, { status: 403 });
+      }
+
+      if (market.approval_deadline && new Date(market.approval_deadline) < new Date()) {
+        return NextResponse.json({ error: 'Voting deadline has passed' }, { status: 400 });
+      }
+
+      const { error: voteError } = await supabase
+        .from('approval_votes')
+        .insert({ market_id: marketId, user_id: user.id, vote });
+
+      if (voteError) {
+        if (voteError.code === '23505') {
+          return NextResponse.json({ error: 'already_voted' }, { status: 409 });
+        }
+        throw voteError;
+      }
+
+      const { count: approvals } = await supabase
+        .from('approval_votes')
+        .select('id', { count: 'exact', head: true })
+        .eq('market_id', marketId)
+        .eq('vote', 'approve');
+
+      let approved = false;
+      const settingValue = await getSetting(supabase, 'min_approval_votes');
+      const minVotes = Number(normalizeSettingValue(settingValue) || 10);
+
+      if ((approvals || 0) >= minVotes) {
+        await supabase
+          .from('markets')
+          .update({ status: 'approved' })
+          .eq('id', marketId);
+        approved = true;
+      }
+
+      await supabase.rpc('log_activity', {
+        p_user_id: user.id,
+        p_action_type: 'approval_vote_cast',
+        p_target_id: marketId,
+        p_details: { vote, via: 'telegram', telegram_user_id: telegramUserId }
+      });
+
+      return NextResponse.json({ success: true, vote, approved, approvals: approvals || 0 });
+    }
+
+    if (action === 'resolve_user') {
+      const telegramUserId = Number(body.telegramUserId);
+      if (!Number.isFinite(telegramUserId)) {
+        return NextResponse.json({ error: 'telegramUserId is required' }, { status: 400 });
+      }
+
+      const { data: user } = await supabase
+        .from('users')
+        .select('id, username, role, points_balance')
+        .eq('telegram_user_id', telegramUserId)
+        .single();
+
+      if (!user) {
+        return NextResponse.json({ error: 'not_linked' }, { status: 404 });
+      }
+
+      return NextResponse.json({ success: true, user });
     }
 
     return NextResponse.json({ error: 'Unsupported action' }, { status: 400 });

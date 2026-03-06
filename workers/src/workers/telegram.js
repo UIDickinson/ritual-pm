@@ -1,10 +1,15 @@
 import {
+  castTelegramVote,
   createTelegramMarket,
   getMarketContext,
   getModelConfig,
+  getTelegramBalance,
   getTelegramCommandState,
+  getTelegramProposals,
   ingestMessages,
   isPipelineEnabled,
+  linkTelegramAccount,
+  resolveTelegramUser,
   setTelegramListening,
   setTelegramUpdateOffset,
   submitPolicyEvents,
@@ -152,6 +157,33 @@ async function answerCallback(botToken, callbackQueryId, text) {
   });
 }
 
+async function deleteMessage(botToken, chatId, messageId) {
+  try {
+    await telegramApiCall(botToken, 'deleteMessage', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  } catch {
+    // Message may already be deleted or too old
+  }
+}
+
+async function editMessageReplyMarkup(botToken, chatId, messageId, replyMarkup) {
+  try {
+    await telegramApiCall(botToken, 'editMessageReplyMarkup', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: replyMarkup || { inline_keyboard: [] }
+    });
+  } catch {
+    // Message may have been deleted or markup unchanged
+  }
+}
+
+function scheduleDelete(botToken, chatId, messageId, delayMs = 60000) {
+  setTimeout(() => deleteMessage(botToken, chatId, messageId), delayMs);
+}
+
 async function isGroupAdmin(botToken, chatId, userId) {
   try {
     const member = await telegramApiCall(botToken, 'getChatMember', {
@@ -169,6 +201,7 @@ function parseCreateArgs(args) {
   const question = parts[0] || '';
   const description = parts[1] || null;
   const closeDateText = parts[2] || null;
+  const outcomesText = parts[3] || null;
 
   if (!question) return null;
 
@@ -180,11 +213,21 @@ function parseCreateArgs(args) {
     }
   }
 
+  let outcomes = ['Yes', 'No'];
+  if (outcomesText) {
+    const custom = outcomesText.split(',').map((o) => o.trim()).filter(Boolean);
+    if (custom.length >= 2 && custom.length <= 5) {
+      outcomes = custom;
+    } else {
+      return { error: 'outcomes_invalid' };
+    }
+  }
+
   return {
     question,
     description,
     closeTime: closeTime.toISOString(),
-    outcomes: ['Yes', 'No']
+    outcomes
   };
 }
 
@@ -328,15 +371,64 @@ async function handleListCallback(botToken, callbackQuery) {
   const callbackData = String(callbackQuery.data || '');
   const [, requestedStatus] = callbackData.split(':');
   const status = requestedStatus === 'proposed' ? 'proposed' : 'live';
+  const msgChatId = callbackQuery.message?.chat?.id;
+  const msgId = callbackQuery.message?.message_id;
+
+  // Remove the selection buttons immediately
+  await editMessageReplyMarkup(botToken, msgChatId, msgId, { inline_keyboard: [] });
 
   try {
     const markets = await listMarketsForStatus(status);
     const text = formatMarketList(status, markets);
-    await sendMessage(botToken, callbackQuery.message?.chat?.id, text);
+    await sendMessage(botToken, msgChatId, text);
     await answerCallback(botToken, callbackQuery.id, `Loaded ${status} markets`);
   } catch (error) {
     await answerCallback(botToken, callbackQuery.id, 'Failed to load markets');
-    await sendMessage(botToken, callbackQuery.message?.chat?.id, `Failed to list markets: ${error.message}`);
+    await sendMessage(botToken, msgChatId, `Failed to list markets: ${error.message}`);
+  }
+}
+
+async function handleVoteCallback(botToken, callbackQuery) {
+  const callbackData = String(callbackQuery.data || '');
+  const [, vote, marketId] = callbackData.split(':');
+  const telegramUserId = callbackQuery.from?.id;
+  const msgChatId = callbackQuery.message?.chat?.id;
+  const msgId = callbackQuery.message?.message_id;
+
+  if (!telegramUserId || !marketId || !['approve', 'reject'].includes(vote)) {
+    await answerCallback(botToken, callbackQuery.id, 'Invalid vote action');
+    return;
+  }
+
+  // Remove buttons immediately
+  await editMessageReplyMarkup(botToken, msgChatId, msgId, { inline_keyboard: [] });
+
+  try {
+    const result = await castTelegramVote({ telegramUserId, marketId, vote });
+
+    if (result.error === 'not_linked') {
+      await answerCallback(botToken, callbackQuery.id, 'Link your account first with /link');
+      return;
+    }
+
+    let text = `✅ Vote recorded: *${vote}*`;
+    if (result.approved) {
+      text += '\n🎉 Market has been approved!';
+    }
+    text += `\nTotal approvals: ${result.approvals || 0}`;
+
+    await answerCallback(botToken, callbackQuery.id, `Voted: ${vote}`);
+    await sendMessage(botToken, msgChatId, text);
+  } catch (error) {
+    const errMsg = error.message || '';
+    if (errMsg.includes('already_voted')) {
+      await answerCallback(botToken, callbackQuery.id, 'You already voted on this market');
+    } else if (errMsg.includes('not_linked')) {
+      await answerCallback(botToken, callbackQuery.id, 'Link your account first with /link');
+    } else {
+      await answerCallback(botToken, callbackQuery.id, 'Vote failed');
+      await sendMessage(botToken, msgChatId, `Vote failed: ${error.message}`);
+    }
   }
 }
 
@@ -352,29 +444,44 @@ async function handleCommand({
   const chatId = String(message.chat?.id || '');
   const chatType = message.chat?.type || 'private';
   const userId = message.from?.id;
+  const isDM = chatType === 'private';
+  const websiteUrl = process.env.RITUAL_WEBSITE_URL || process.env.RITUAL_API_BASE_URL || 'https://ritual-market.vercel.app';
 
   if (command === '/start') {
     await sendMessage(
       botToken,
       chatId,
       [
-        '*Welcome to Ritual Bot*',
+        '*Welcome to Ritual Bot* 🎯',
         '',
-        'I help your community discover and create prediction markets from group or channel conversations.',
+        'Your gateway to the Ritual prediction market ecosystem.',
         '',
-        '*How to use*',
-        '1. Use /Listen in a group or channel to start ingestion.',
-        '2. Use /Peek to analyze recent discussion and generate proposal candidates.',
-        '3. Use /Create to submit a market idea directly.',
-        '4. Use /List to view Proposed or Live markets.',
+        '*Getting started*',
+        `1. Register at ${websiteUrl}/register if you don't have an account yet.`,
+        '2. DM me /link username password to connect your account.',
+        '3. Use the commands below to participate!',
+        '',
+        '*Account (DM only)*',
+        '/link - Connect your Ritual account',
+        '/balance - Check your balance & stats',
+        '/create - Submit a market proposal',
+        '',
+        '*Markets (anywhere)*',
+        '/vote - Vote on proposed markets',
+        '/list - Browse Proposed or Live markets',
+        '',
+        '*Group tools*',
+        '/listen - Start message ingestion',
+        '/stop - Stop message ingestion',
+        '/peek - Analyze recent chat for market ideas',
         '',
         'Tap an option below or type a command anytime.'
       ].join('\n'),
       {
         reply_markup: {
           keyboard: [
-            [{ text: '/Listen' }, { text: '/Stop' }],
-            [{ text: '/Peek' }, { text: '/List' }],
+            [{ text: '/Link' }, { text: '/Balance' }],
+            [{ text: '/Vote' }, { text: '/List' }],
             [{ text: '/Create' }, { text: '/Help' }]
           ],
           resize_keyboard: true,
@@ -392,17 +499,186 @@ async function handleCommand({
       [
         '*Ritual Bot Commands*',
         '',
-        '/Listen - Start ingestion for this group/channel',
-        '/Stop - Stop ingestion for this group/channel',
-        '/Peek - Quick analysis of recent chat messages to generate proposal candidates',
-        '/Create question | optional description | optional YYYY-MM-DD',
-        '/List - Choose Proposed or Live markets',
-        '/Help - Show this help message',
+        '*Account (DM only)*',
+        '/link username password - Connect your Ritual account',
+        '/balance - View balance, predictions & stats',
         '',
-        '*Example*',
-        '/Create Will ETH ETF be approved? | SEC decision tracker | 2026-04-01'
+        '*Markets*',
+        '/vote - Vote on proposed markets (approve/reject)',
+        '/create question | description | date | options - Submit a market proposal (DM only)',
+        '/list - Choose between Proposed and Live markets',
+        '',
+        '*Group tools*',
+        '/listen - Start ingestion for this group/channel',
+        '/stop - Stop ingestion for this group/channel',
+        '/peek - Quick analysis of recent messages',
+        '',
+        '*Examples*',
+        '_Yes/No:_ /create Will ETH ETF be approved? | SEC decision tracker | 2026-04-01',
+        '_Multichoice:_ /create Who wins the election? | 2026 race | 2026-11-05 | Alice, Bob, Charlie',
+        '',
+        `Don't have an account? Register at ${websiteUrl}/register`
       ].join('\n')
     );
+    return;
+  }
+
+  if (command === '/link') {
+    if (!isDM) {
+      await sendMessage(botToken, chatId, '🔒 For security, use /link in a *direct message* with me.');
+      return;
+    }
+
+    // Delete the user's message containing credentials
+    await deleteMessage(botToken, chatId, message.message_id);
+
+    const parts = args.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+      await sendMessage(botToken, chatId, 'Usage: /link username password\n\nYour message has been deleted for security.');
+      return;
+    }
+
+    const [username, password] = parts;
+
+    try {
+      const result = await linkTelegramAccount({
+        username,
+        password,
+        telegramUserId: userId
+      });
+
+      if (result.success) {
+        await sendMessage(
+          botToken,
+          chatId,
+          `✅ Account linked successfully!\n\nWelcome, *${result.user.username}*\nBalance: *${Number(result.user.points_balance).toFixed(2)} pts*\nRole: ${result.user.role}\n\nYour credentials have been deleted from chat.`
+        );
+      } else {
+        await sendMessage(botToken, chatId, '❌ Linking failed. Please check your credentials and try again.');
+      }
+    } catch (error) {
+      const errMsg = error.message || '';
+      if (errMsg.includes('invalid_credentials')) {
+        await sendMessage(
+          botToken,
+          chatId,
+          `❌ Invalid username or password.\n\nDon't have an account? Register at ${websiteUrl}/register`
+        );
+      } else if (errMsg.includes('telegram_already_linked')) {
+        await sendMessage(botToken, chatId, '❌ This Telegram account is already linked to another Ritual account.');
+      } else {
+        await sendMessage(botToken, chatId, `❌ Linking failed: ${error.message}`);
+      }
+    }
+    return;
+  }
+
+  if (command === '/balance') {
+    if (!isDM) {
+      await sendMessage(botToken, chatId, '🔒 Use /balance in a *direct message* with me.');
+      return;
+    }
+
+    try {
+      const result = await getTelegramBalance(userId);
+
+      if (result.error === 'not_linked') {
+        await sendMessage(
+          botToken,
+          chatId,
+          `Your Telegram account is not linked to a Ritual account.\n\nUse /link username password to connect.\nOr register at ${websiteUrl}/register`
+        );
+        return;
+      }
+
+      const { user, stats } = result;
+      await sendMessage(
+        botToken,
+        chatId,
+        [
+          `*${user.username}* — Account Summary`,
+          '',
+          `💰 Balance: *${Number(user.points_balance).toFixed(2)} pts*`,
+          `📊 Predictions: ${stats.total_predictions}`,
+          `✅ Wins: ${stats.wins}`,
+          `❌ Losses: ${stats.losses}`,
+          `🗳️ Votes cast: ${stats.total_votes}`,
+          `👤 Role: ${user.role}`
+        ].join('\n')
+      );
+    } catch (error) {
+      const errMsg = error.message || '';
+      if (errMsg.includes('not_linked')) {
+        await sendMessage(
+          botToken,
+          chatId,
+          `Your Telegram account is not linked.\nUse /link username password to connect.\nOr register at ${websiteUrl}/register`
+        );
+      } else {
+        await sendMessage(botToken, chatId, `Failed to fetch balance: ${error.message}`);
+      }
+    }
+    return;
+  }
+
+  if (command === '/vote') {
+    try {
+      // Check if user is linked
+      let linked = false;
+      try {
+        const userResult = await resolveTelegramUser(userId);
+        linked = userResult.success;
+      } catch {
+        linked = false;
+      }
+
+      if (!linked) {
+        await sendMessage(
+          botToken,
+          chatId,
+          `You need to link your Ritual account first.\nDM me /link username password\nOr register at ${websiteUrl}/register`
+        );
+        return;
+      }
+
+      const result = await getTelegramProposals(userId);
+      const proposals = result.proposals || [];
+
+      if (!proposals.length) {
+        await sendMessage(botToken, chatId, 'No proposed markets to vote on right now.');
+        return;
+      }
+
+      for (const proposal of proposals) {
+        if (proposal.already_voted) continue;
+
+        const closeDate = proposal.close_time ? new Date(proposal.close_time).toISOString().slice(0, 10) : 'n/a';
+        const text = `🗳️ *${proposal.question}*\nCloses: ${closeDate}`;
+
+        const sent = await sendMessage(botToken, chatId, text, {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '✅ Approve', callback_data: `vote:approve:${proposal.id}` },
+                { text: '❌ Reject', callback_data: `vote:reject:${proposal.id}` }
+              ]
+            ]
+          }
+        });
+
+        // Auto-delete vote messages after 1 minute
+        if (sent?.message_id) {
+          scheduleDelete(botToken, chatId, sent.message_id, 60000);
+        }
+      }
+
+      const votableCount = proposals.filter((p) => !p.already_voted).length;
+      if (votableCount === 0) {
+        await sendMessage(botToken, chatId, "You've already voted on all current proposals. Check back later!");
+      }
+    } catch (error) {
+      await sendMessage(botToken, chatId, `Failed to load proposals: ${error.message}`);
+    }
     return;
   }
 
@@ -445,35 +721,57 @@ async function handleCommand({
   }
 
   if (command === '/create') {
-    const parsed = parseCreateArgs(args);
-    if (!parsed) {
-      await sendMessage(botToken, chatId, 'Usage: /Create question | optional description | optional YYYY-MM-DD\nExample: /Create Will ETH ETF be approved? | SEC decision tracker | 2026-04-01');
+    if (!isDM) {
+      await sendMessage(botToken, chatId, '🔒 Use /create in a *direct message* with me to take your time composing the market.');
       return;
     }
 
-    const adminInGroup = ['group', 'supergroup', 'channel'].includes(chatType)
-      ? await isGroupAdmin(botToken, chatId, userId)
-      : false;
+    const parsed = parseCreateArgs(args);
+    if (!parsed) {
+      await sendMessage(botToken, chatId, 'Usage: /create question | description | YYYY-MM-DD | options\n\n_Yes/No (default):_\n/create Will ETH ETF be approved? | SEC decision | 2026-04-01\n\n_Multichoice (2-5 options):_\n/create Who wins? | Election race | 2026-11-05 | Alice, Bob, Charlie');
+      return;
+    }
 
-    const makeLive = Boolean(adminInGroup);
+    if (parsed.error === 'outcomes_invalid') {
+      await sendMessage(botToken, chatId, '❌ Multichoice markets need 2 to 5 comma-separated options.\n\nExample: /create Who wins? | desc | 2026-12-01 | Option A, Option B, Option C');
+      return;
+    }
+
+    // Require linked account for /create
+    let linkedUser = null;
+    try {
+      const userResult = await resolveTelegramUser(userId);
+      if (userResult.success) linkedUser = userResult.user;
+    } catch {
+      // not linked
+    }
+
+    if (!linkedUser) {
+      await sendMessage(
+        botToken,
+        chatId,
+        `You need to link your Ritual account before creating markets.\nUse /link username password\nOr register at ${websiteUrl}/register`
+      );
+      return;
+    }
+
     const result = await createTelegramMarket({
       ...parsed,
-      makeLive,
+      makeLive: false,
       requestedBy: {
         telegramUserId: userId || null,
         telegramUsername: message.from?.username || null,
         chatId,
         chatType,
-        command: '/create'
+        command: '/create',
+        linkedUserId: linkedUser.id
       }
     });
 
     await sendMessage(
       botToken,
       chatId,
-      makeLive
-        ? `✅ Live market created: *${result.market?.question || parsed.question}*`
-        : `✅ Proposed market created: *${result.market?.question || parsed.question}*`
+      `✅ Market proposal submitted: *${result.market?.question || parsed.question}*\n\nIt will go through community voting before going live.`
     );
     return;
   }
@@ -543,6 +841,11 @@ async function runTelegramWorkerCycle() {
 
     if (update.callback_query?.data?.startsWith('list:')) {
       await handleListCallback(botToken, update.callback_query);
+      continue;
+    }
+
+    if (update.callback_query?.data?.startsWith('vote:')) {
+      await handleVoteCallback(botToken, update.callback_query);
       continue;
     }
 

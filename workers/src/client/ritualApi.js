@@ -142,3 +142,42 @@ export async function createTelegramMarket({ question, description, outcomes, cl
     requestedBy
   });
 }
+
+export async function linkTelegramAccount({ username, password, telegramUserId }) {
+  return post('/api/ai/telegram', {
+    action: 'link_account',
+    username,
+    password,
+    telegramUserId
+  });
+}
+
+export async function getTelegramBalance(telegramUserId) {
+  return post('/api/ai/telegram', {
+    action: 'get_balance',
+    telegramUserId
+  });
+}
+
+export async function getTelegramProposals(telegramUserId) {
+  return post('/api/ai/telegram', {
+    action: 'get_proposals',
+    telegramUserId
+  });
+}
+
+export async function castTelegramVote({ telegramUserId, marketId, vote }) {
+  return post('/api/ai/telegram', {
+    action: 'cast_vote',
+    telegramUserId,
+    marketId,
+    vote
+  });
+}
+
+export async function resolveTelegramUser(telegramUserId) {
+  return post('/api/ai/telegram', {
+    action: 'resolve_user',
+    telegramUserId
+  });
+}
